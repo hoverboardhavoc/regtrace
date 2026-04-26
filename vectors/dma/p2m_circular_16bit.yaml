@@ -15,6 +15,7 @@ description: |
   buffer state is out of scope per regtrace's design.
 
 mode: register_writes
+default_compare: [gd-spl/gd32f1x0, libopencm3/stm32f0]
 
 implementations:
   gd-spl/gd32f1x0:
@@ -48,3 +49,17 @@ implementations:
       dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_VERY_HIGH);
       dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
       // libopencm3 has no dma_disable_mem2mem_mode — mem2mem defaults disabled.
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      dma_set_peripheral_address(DMA1, DMA_CHANNEL1, 0x4001244C);
+      dma_set_memory_address(DMA1, DMA_CHANNEL1, 0x20000100);
+      dma_set_number_of_data(DMA1, DMA_CHANNEL1, 2);
+      dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+      dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_disable_peripheral_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+      dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+      dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_VERY_HIGH);
+      dma_enable_circular_mode(DMA1, DMA_CHANNEL1);

@@ -13,6 +13,8 @@ description: |
 
 mode: final_state
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/stm32f0]
+
 ignore:
   - <USART1_BASE>+0x0C   # USART_BRR — baud divisor depends on assumed clock
 
@@ -29,6 +31,17 @@ implementations:
       usart_enable(USART0);
 
   libopencm3/stm32f0:
+    includes: [libopencm3/stm32/usart.h]
+    body: |
+      usart_set_baudrate(USART1, 115200);
+      usart_set_parity(USART1, USART_PARITY_NONE);
+      usart_set_databits(USART1, 8);
+      usart_set_stopbits(USART1, USART_STOPBITS_1);
+      usart_set_mode(USART1, USART_MODE_TX_RX);
+      usart_set_flow_control(USART1, USART_FLOWCONTROL_NONE);
+      usart_enable(USART1);
+
+  libopencm3/gd32f1x0:
     includes: [libopencm3/stm32/usart.h]
     body: |
       usart_set_baudrate(USART1, 115200);
