@@ -1,0 +1,27 @@
+name: calibration_enable
+description: |
+  ADC self-calibration. Both impls have a polling loop on the calibration-
+  in-progress bit (ADC_CR_ADCAL on libopencm3 stm32f0; ADC_CTL1_RSTCLB then
+  ADC_CTL1_CLB on gd-spl gd32f1x0). read_responses returns 0 from CR/CTL1
+  (offset 0x08) so the polling loops exit on the first iteration.
+
+  Validates `with_polling` mode end-to-end. Expected outcome: divergent in
+  any mode — the libopencm3 v2 ADC has a single ADCAL bit and one polling
+  loop; the gd-spl v1 ADC has two separate operations (RSTCLB then CLB)
+  with their own polling loops. Confirms the v2-vs-v1 ADC split decision.
+
+mode: with_polling
+
+read_responses:
+  "<ADC1_BASE>+0x08": 0x00000000   # ADC_CR / ADC_CTL1 — calibration bit clears immediately
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_adc.h]
+    body: |
+      adc_calibration_enable();
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/adc.h]
+    body: |
+      adc_calibrate(ADC1);

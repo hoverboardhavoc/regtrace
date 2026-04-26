@@ -1,0 +1,30 @@
+name: config_2sec_period
+description: |
+  Configure the independent watchdog for ~1.6 second timeout (LSI 32-40 kHz)
+  and start it. This is the canonical hoverboard FWDGT pattern (setup.c L100):
+  fwdgt_config(0x0FFF, FWDGT_PSC_DIV16) + fwdgt_enable.
+
+  libopencm3's iwdg_set_period_ms argument was chosen to land on the same
+  IWDG_PR / IWDG_RLR final values as gd-spl's raw (reload, prescaler) inputs:
+  period=2048ms with the 32 kHz LSI assumption gives prescale=2 (= /16 = SPL
+  FWDGT_PSC_DIV16) and RLR=0x0FFF, byte-identical to the SPL config.
+
+  In register_writes mode the traces diverge: libopencm3 writes the START
+  key (0xCCCC) twice (once at the top of set_period_ms, once at iwdg_start)
+  and emits a RELOAD key (0xAAAA) that gd-spl's fwdgt_config doesn't.
+  In final_state mode the IWDG/FWDGT register state matches.
+
+mode: final_state
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_fwdgt.h]
+    body: |
+      fwdgt_config(0x0FFF, FWDGT_PSC_DIV16);
+      fwdgt_enable();
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/iwdg.h]
+    body: |
+      iwdg_set_period_ms(2048);
+      iwdg_start();

@@ -35,7 +35,7 @@ I2C0_BASE   = 0x40005400   # I2C0 in GD = I2C1 in STM
 PWR_BASE    = 0x40007000
 SYSCFG_BASE = 0x40010000
 EXTI_BASE   = 0x40010400
-ADC0_BASE   = 0x40012400
+ADC1_BASE   = 0x40012400   # GD calls this ADC0; using STM32-style ADC1 for cross-family comparison
 TIM1_BASE   = 0x40012C00   # GD calls this TIMER0
 SPI0_BASE   = 0x40013000
 USART0_BASE = 0x40013800
@@ -77,6 +77,13 @@ SYSTICK_BASE = 0xE000E010
 "0x44" = "BDTR"
 "0x48" = "DCR"
 "0x4C" = "DMAR"
+
+[register_names.IWDG_BASE]
+"0x00" = "KR"
+"0x04" = "PR"
+"0x08" = "RLR"
+"0x0C" = "SR"
+"0x10" = "WINR"
 
 [register_names.RCC_BASE]
 "0x00" = "CR"

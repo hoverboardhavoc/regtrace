@@ -8,7 +8,7 @@ from .. import targets as targets_mod, vectors as vectors_mod
 from ..build.pipeline import build_one
 from ..paths import vectors_dir
 from ..trace.extractor import extract
-from .engine import compare, _parse_trace_text, _trace_lines_from_extracted
+from .engine import apply_filters, compare, _parse_trace_text, _trace_lines_from_extracted
 
 
 def run_regression(baseline: Path) -> int:
@@ -40,8 +40,9 @@ def run_regression(baseline: Path) -> int:
             built = build_one(vec, slug, rev=rev)
             tgt = targets_mod.load(target)
             live = extract(built.elf_path, target=tgt, vector=vec)
-            live_lines = _trace_lines_from_extracted(live)
+            live_lines = apply_filters(_trace_lines_from_extracted(live), vec.assert_only, vec.ignore)
             golden_lines, _ = _parse_trace_text(trace_file.read_text())
+            golden_lines = apply_filters(golden_lines, vec.assert_only, vec.ignore)
             cr = compare(vec.mode, live_lines, "live", golden_lines, "golden")
             if cr.matched:
                 matched.append(f"{slug}/{vec.vector_id}")

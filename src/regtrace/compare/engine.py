@@ -75,6 +75,57 @@ class CompareResult:
     diff: list[str]
 
 
+def _parse_range(expr: str) -> tuple[str, int, int]:
+    """Parse `<SYMBOL>+0xLO..0xHI` (or `<SYMBOL>+0xOFFSET` as a single-byte range).
+
+    Returns (symbol, lo_offset, hi_offset). Both offsets are inclusive.
+    """
+    if not expr.startswith("<"):
+        raise ValueError(f"filter expr must start with `<SYMBOL>`: {expr!r}")
+    end = expr.index(">")
+    sym = expr[1:end]
+    rest = expr[end + 1:]
+    if not rest:
+        return (sym, 0, 0xFFFFFFFF)
+    if not rest.startswith("+"):
+        raise ValueError(f"malformed filter expr: {expr!r}")
+    rest = rest[1:]
+    if ".." in rest:
+        lo_s, hi_s = rest.split("..", 1)
+        return (sym, int(lo_s, 0), int(hi_s, 0))
+    off = int(rest, 0)
+    return (sym, off, off)
+
+
+def _line_matches_range(line: TraceLine, sym: str, lo: int, hi: int) -> bool:
+    """True if `line.address_str` is within `<sym>+lo..hi`."""
+    s = line.address_str
+    if not s.startswith(f"<{sym}>"):
+        return False
+    rest = s[len(sym) + 2:]
+    if not rest:
+        offset = 0
+    elif rest.startswith("+"):
+        offset = int(rest[1:], 0)
+    else:
+        return False
+    return lo <= offset <= hi
+
+
+def apply_filters(lines: list[TraceLine],
+                  assert_only: tuple[str, ...] = (),
+                  ignore: tuple[str, ...] = ()) -> list[TraceLine]:
+    """Filter trace lines per a vector's `assert_only` (whitelist) or `ignore`
+    (blacklist). Mutually exclusive — caller validates that."""
+    if assert_only:
+        ranges = [_parse_range(e) for e in assert_only]
+        return [l for l in lines if any(_line_matches_range(l, *r) for r in ranges)]
+    if ignore:
+        ranges = [_parse_range(e) for e in ignore]
+        return [l for l in lines if not any(_line_matches_range(l, *r) for r in ranges)]
+    return lines
+
+
 def compare(mode: str, a: list[TraceLine], a_label: str, b: list[TraceLine], b_label: str) -> CompareResult:
     if mode == "register_writes":
         a_w = [x for x in a if x.op == "W"]
@@ -159,6 +210,8 @@ def run_compare(
         live_lines = _trace_lines_from_extracted(live)
         golden_text = Path(against_trace).read_text()
         golden_lines, golden_headers = _parse_trace_text(golden_text)
+        live_lines = apply_filters(live_lines, vec.assert_only, vec.ignore)
+        golden_lines = apply_filters(golden_lines, vec.assert_only, vec.ignore)
         cr = compare(vec.mode, live_lines, "live", golden_lines, "golden")
         return _print_compare(vec, slug, "golden:" + str(against_trace), cr)
 
@@ -204,11 +257,9 @@ def _compare_two(vec: vectors_mod.Vector, a_slug: str, b_slug: str) -> int:
     b_target = targets_mod.load(b_build.target)
     a_trace = extract(a_build.elf_path, target=a_target, vector=vec)
     b_trace = extract(b_build.elf_path, target=b_target, vector=vec)
-    cr = compare(
-        vec.mode,
-        _trace_lines_from_extracted(a_trace), a_slug,
-        _trace_lines_from_extracted(b_trace), b_slug,
-    )
+    a_lines = apply_filters(_trace_lines_from_extracted(a_trace), vec.assert_only, vec.ignore)
+    b_lines = apply_filters(_trace_lines_from_extracted(b_trace), vec.assert_only, vec.ignore)
+    cr = compare(vec.mode, a_lines, a_slug, b_lines, b_slug)
     return _print_compare(vec, a_slug, b_slug, cr)
 
 

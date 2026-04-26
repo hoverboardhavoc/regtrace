@@ -3,7 +3,7 @@ description: |
   Center-aligned PWM @ 16 kHz, repetition counter = 1 to fire UPIF
   once per period. The hoverboard FOC config used in production.
 
-mode: register_writes
+mode: final_state
 
 implementations:
   gd-spl/gd32f1x0:

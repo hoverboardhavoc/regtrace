@@ -1,0 +1,34 @@
+name: single_channel_right_aligned
+description: |
+  Configure ADC for single regular conversion on channel 4, sample time 13.5
+  cycles, right-aligned data, and power on. Mined from the hoverboard
+  setup.c ADC init pattern (channel-length=1 path).
+
+  This vector deliberately surfaces the v0.2 finding that GD32F1x0's ADC has
+  the *STM32F1-style* register layout (ADC_RSQ0/RSQ1/RSQ2 sequence regs,
+  ADC_SAMPT0/SAMPT1 per-channel sample times) rather than the STM32F0-style
+  v2 layout libopencm3 uses for stm32f0 (CHSELR bitmap + single SMPR for all
+  channels). Expected outcome: divergent in both register_writes AND
+  final_state modes — different registers entirely. The share-or-split
+  recommendation should be **split** when comparing against stm32f0; a
+  follow-up vector should compare against stm32f1 (where layout matches).
+
+mode: register_writes
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_adc.h]
+    body: |
+      adc_channel_length_config(ADC_REGULAR_CHANNEL, 1);
+      adc_regular_channel_config(0, ADC_CHANNEL_4, ADC_SAMPLETIME_13POINT5);
+      adc_data_alignment_config(ADC_DATAALIGN_RIGHT);
+      adc_enable();
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/adc.h]
+    body: |
+      uint8_t channels[] = {4};
+      adc_set_regular_sequence(ADC1, 1, channels);
+      adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_013DOT5);
+      adc_set_right_aligned(ADC1);
+      adc_power_on(ADC1);

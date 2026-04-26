@@ -86,6 +86,14 @@ SYSTICK_BASE = 0xE000E010
 "0x48" = "DCR"
 "0x4C" = "DMAR"
 
+[register_names.IWDG_BASE]
+"0x00" = "KR"
+"0x04" = "PR"
+"0x08" = "RLR"
+"0x0C" = "SR"
+"0x10" = "WINR"
+"0x14" = "EWCR"
+
 [register_names.RCC_BASE]
 "0x00" = "CR"
 "0x04" = "CFGR"
