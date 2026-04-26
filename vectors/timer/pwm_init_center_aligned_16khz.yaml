@@ -82,6 +82,15 @@ implementations:
       timer_set_repetition_counter(TIM1, 1);
       timer_generate_event(TIM1, TIM_EGR_UG);
 
+  libopencm3/gd32f10x:
+    includes: [libopencm3/stm32/timer.h]
+    body: |
+      timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
+      timer_set_period(TIM1, 2250);
+      timer_set_prescaler(TIM1, 0);
+      timer_set_repetition_counter(TIM1, 1);
+      timer_generate_event(TIM1, TIM_EGR_UG);
+
   gd-spl/gd32vf103:
     includes: [gd32vf103.h, gd32vf103_timer.h]
     body: |

@@ -1,0 +1,50 @@
+name: output_pa5_pp_50mhz
+description: |
+  Configure PA5 as push-pull output, max speed 50 MHz, no pull-up/pull-down.
+  Single-pin GPIO config — the canonical "blink an LED" first step. Mined
+  from the hoverboard's LED setup pattern.
+
+  This vector is the empirical heart of the F1x0 vs F10x split mentioned
+  in SPEC.md (line 660): F1x0 uses STM32F0-style v2 GPIO (split MODER /
+  PUPDR / OTYPER / OSPEEDR / AFRL/AFRH registers); F10x uses STM32F1-style
+  v1 (combined CRL/CRH MODE+CNF). The trace shape will be quite different
+  between the two families — expected. The decision is "share-with-stm32-f0"
+  for F1x0 and "share-with-stm32-f1" for F10x.
+
+mode: final_state
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/stm32f0]
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_gpio.h]
+    body: |
+      gpio_mode_set(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO_PIN_5);
+      gpio_output_options_set(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO_PIN_5);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/gpio.h]
+    body: |
+      gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
+      gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_HIGH, GPIO5);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/gpio.h]
+    body: |
+      gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
+      gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_HIGH, GPIO5);
+
+  gd-spl/gd32f10x:
+    includes: [gd32f10x.h, gd32f10x_gpio.h]
+    body: |
+      gpio_init(GPIOA, GPIO_MODE_OUT_PP, GPIO_OSPEED_50MHZ, GPIO_PIN_5);
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/gpio.h]
+    body: |
+      gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO5);
+
+  libopencm3/gd32f10x:
+    includes: [libopencm3/stm32/gpio.h]
+    body: |
+      gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO5);
