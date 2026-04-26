@@ -149,7 +149,7 @@ regtrace itself uses Python's src-layout:
 │   └── ...
 ├── pyproject.toml                # version is the single source of truth in [project].version
 ├── bootstrap.toml                # pinned commits for sibling repos
-├── build_assets/<target>/        # vendored startup files + linker scripts (CMSIS-derived)
+├── build_assets/<library>/<target>/  # vendored startup files + linker scripts (CMSIS-derived)
 ├── targets/<family>.toml         # peripheral bases, register names, reset values, bit-band aliases
 ├── vectors/<peripheral>/         # test vector YAMLs
 ├── golden/<library>/<rev>/<target>/  # captured artifacts (.elf via LFS, .trace plain text)
@@ -161,9 +161,10 @@ regtrace itself uses Python's src-layout:
 
 Conventions worth pinning:
 - **Version source of truth.** regtrace's own version lives once in `pyproject.toml` `[project].version`; runtime reads it via `importlib.metadata.version("regtrace")` and stamps it into trace headers and `decisions/` paths.
-- **Workspace root.** `REGTRACE_WORKSPACE` env var, default `~/dev/c/`. Used by `bootstrap.toml`'s `path` field via `${REGTRACE_WORKSPACE}` interpolation.
+- **Workspace root.** `REGTRACE_WORKSPACE` env var, default `~/dev/c/`. Used by `bootstrap.toml`'s `path` field via `${REGTRACE_WORKSPACE}` interpolation. Note: this interpolation is non-standard TOML — regtrace applies a custom resolver pass after `tomli`-loading `bootstrap.toml`.
 - **HAL static-lib cache.** `~/.cache/regtrace/libs/<library>/<rev>/<target>/lib<library>.a`. Cache key includes gcc version + flags. First build of a `(library, rev, target)` combo takes ~30s; subsequent invocations are cached. `regtrace clean --libs` evicts.
-- **Build output mirrors goldens.** `build/<library>/<rev>/<target>/<vector>.elf` — same path scheme as `golden/`. `regtrace capture` is `regtrace build` plus a copy into `golden/` (with a `BUILD.txt` provenance file).
+- **Vector identifier.** `<peripheral>_<name>` where `<peripheral>` is the YAML's parent directory under `vectors/` and `<name>` is the YAML's `name:` field. The `name:` field MUST equal the YAML basename (without `.yaml`). This identifier is used as the ELF/trace basename and as the CLI vector argument (`regtrace compare timer_pwm_init_center_aligned_16khz`).
+- **Build output mirrors goldens.** `build/<library>/<rev>/<target>/<peripheral>_<name>.elf` — same path scheme as `golden/`. `regtrace capture` is `regtrace build` plus a copy into `golden/` (with a `BUILD.txt` provenance file at `golden/<library>/<rev>/<target>/BUILD.txt`).
 
 ### Self-validation gates
 
@@ -210,7 +211,7 @@ Documented decision tree for common stuck states:
 
 | symptom | likely cause | next step |
 |---|---|---|
-| "snippet compiles for libopencm3 but not for SPL" | missing system_<chip>.c or startup file | check `~/.platformio/packages/framework-spl-gd32/gd32/cmsis/`; copy or reference startup file. |
+| "snippet compiles for libopencm3 but not for SPL" | missing system_<chip>.c or startup file in `build_assets/<library>/<target>/` | the runtime path is `build_assets/`; if a target is missing assets, copy a CMSIS-derived reference (e.g., `~/.platformio/packages/framework-spl-gd32/gd32/cmsis/` is a useful starting point) into `build_assets/<library>/<target>/`, trim to the minimum (reset vector, stack, branch to test fn, bkpt sentinel), and commit. |
 | "trace is empty" | emulation didn't reach the test function (LR sentinel mis-set, fault on unmapped memory) or the function legitimately wrote no MMIO | re-run with `regtrace trace --debug` for the per-instruction execution log; verify the LR sentinel was hit cleanly (not the step cap) and that PC entered the test function. If clean exit and still empty, the function genuinely wrote no peripheral memory — check via `arm-none-eabi-objdump -d` that you expected it to. |
 | "trace differs but I expected match" | check (1) compiler flags pinned across both implementations, (2) bit-banding alias→underlying translation in the per-target write-hook (chips with bit-banding only), (3) reset values seeded for any registers the function reads before writing (per `targets/<chip>.toml`), (4) `read_responses` declared if the function polls, (5) emulation completed cleanly (LR sentinel, not step cap). If all OK, the divergence is real. |
 | "libopencm3 doesn't have driver for peripheral X" | expected at v0.1 stage — log it as an open peripheral, mine the SPL behavior, write down what would be needed. |
@@ -240,17 +241,29 @@ description: |
 
 # `default_compare:` declares the canonical pair for `regtrace compare <vector>`
 # with no explicit --against=. Required when 3+ implementations are declared;
-# auto-derived when exactly 2 are declared. `--all-pairs` overrides to render
-# the full N×N matrix (used by share-or-split decision generation).
-default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+# auto-derived when exactly 2 are declared (omitted here for that reason).
+# `--all-pairs` overrides to render the full N×N matrix (used by share-or-split
+# decision generation).
 
 # `read_responses:` (optional, v0.2+) maps peripheral read addresses to the
 # values Unicorn returns when the function reads them. Used by polling loops
 # (ADC calibration, HSE startup) to keep emulation deterministic — the loop
 # completes naturally and emulation reaches the function epilogue. Vectors
-# without polling don't need this field.
+# without polling don't need this field. Values may be a scalar (returned on
+# every read) or a list (returned in order; the last value sticks once
+# exhausted, useful for "polls N times then completes" patterns).
 # read_responses:
-#   <ADC_BASE>+0x08: 0x00      # CALOFR clears when calibration completes
+#   <ADC_BASE>+0x08: 0x00                    # scalar — always 0
+#   <ADC_BASE>+0x10: [0x01, 0x01, 0x00]      # list  — 1, 1, then 0 thereafter
+
+# `assert_only:` / `ignore:` (optional, mutually exclusive, v0.2+) filter the
+# trace before comparison. `assert_only` is a whitelist of address ranges to
+# keep; `ignore` is a blacklist to strip. Ranges use the same symbolic form as
+# trace records. Use sparingly — too-narrow filtering can mask real bugs.
+# assert_only:
+#   - <TIM1_BASE>+0x00..0x44
+# ignore:
+#   - <RCU_BASE>+0x18                        # AHBEN — clock enables vary by HAL
 
 implementations:
   gd-spl/gd32f1x0:
@@ -274,14 +287,9 @@ implementations:
       timer_set_prescaler(TIM1, 0);
       timer_set_repetition_counter(TIM1, 1);
       timer_generate_event(TIM1, TIM_EGR_UG);
-
-  libopencm3/gd32f1x0:        # the implementation under development
-    includes: [libopencm3/gd32/f1x0/timer.h]
-    body: |
-      # ...same as stm32/f0 if shared, else GD-specific calls
-      timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
-      ...
 ```
+
+The `libopencm3/gd32f1x0` implementation is the one under development in v0.1; once the F1x0 driver lands, it gets added to `implementations:` and `default_compare:` is declared explicitly to pin the canonical pair.
 
 Library-ids are chosen from a short, stable vocabulary:
 
@@ -300,9 +308,9 @@ The harness wraps each `body` in a `__attribute__((noinline, used))` test functi
 
 The build pipeline is owned end-to-end by regtrace — no PlatformIO or external build system on the critical path:
 
-- **Vendored startup files + linker scripts** live in `regtrace/build_assets/<target>/`. Minimal — reset vector, stack pointer, branch to the test function, `bkpt` sentinel after return. CMSIS-derived; copy-pasted, not generated, so they sit in source control where they can be reviewed.
+- **Vendored startup files + linker scripts** live in `regtrace/build_assets/<library>/<target>/`. Library first because startup expectations vary more by HAL (libopencm3 vs SPL vs Cube LL) than by chip family. Minimal — reset vector, stack pointer, branch to the test function, `bkpt` sentinel after return. CMSIS-derived; copy-pasted, not generated, so they sit in source control where they can be reviewed.
 - **HAL static libraries** are built on demand (libopencm3 via its Makefile, SPL via a small per-family build recipe in regtrace) and cached at `~/.cache/regtrace/libs/<library>/<rev>/<target>/lib<library>.a`. Cache key includes gcc version + flags. First build of a `(library, rev, target)` combo takes ~30s; subsequent invocations are cached.
-- **Snippet ELFs** land in `build/<library>/<rev>/<target>/<vector>.elf` — same path scheme as `golden/` so `capture` is `build` + copy + provenance.
+- **Snippet ELFs** land in `build/<library>/<rev>/<target>/<peripheral>_<name>.elf` — same path scheme as `golden/` so `capture` is `build` + copy + provenance.
 - **Reproducibility.** Every build records gcc version, libopencm3/SPL commit, and compile flags into both `BUILD.txt` (per-version directory) and the `.trace` header. A fresh checkout at the same `bootstrap.toml` pins should reproduce byte-identical artifacts.
 
 ### 2. Trace extraction
@@ -382,7 +390,7 @@ This lets you:
 
 The `.elf` is the canonical artifact for several reasons:
 
-- **Lowest barrier for PR reviewers.** A reviewer without arm-none-eabi-gcc / libopencm3 / Cube LL installed can still run `regtrace verify` against the stored `.elf` and confirm the proposed change matches expectations. Without binaries, every reviewer would need a full cross-compilation environment.
+- **Lowest barrier for PR reviewers.** A reviewer without arm-none-eabi-gcc / libopencm3 / Cube LL installed can still run `regtrace re-extract` against the stored `.elf` and `regtrace compare --against-trace=` to confirm the proposed change matches expectations. Without binaries, every reviewer would need a full cross-compilation environment.
 - **Toolchain rot resistance.** Years from now, the exact gcc / libopencm3 / SPL combination used to capture a golden may not be reproducible. The stored `.elf` survives.
 - **Re-extractor compatibility.** If regtrace's extractor improves (richer hook callbacks, additional register-name maps, support for a new architecture, better source-line attribution), re-running it against the stored `.elf` regenerates richer traces without needing the original build env.
 - **Verification.** Text traces alone can be tampered with or hand-edited. The `.elf` + extractor produces the trace deterministically — a third party can confirm `regtrace trace <golden.elf> == golden.trace` exactly.
@@ -441,9 +449,9 @@ Capture writes both the `.elf` and the derived `.trace`:
 ```bash
 # Capture goldens for a specific library at the current checked-out version
 $ regtrace capture --library=libopencm3 --vectors=vectors/timer/
-  → writes golden/libopencm3/<auto-detected-rev>/<target>/<vector>.elf
-  → writes golden/libopencm3/<auto-detected-rev>/<target>/<vector>.trace
-  → writes golden/libopencm3/<auto-detected-rev>/BUILD.txt (provenance)
+  → writes golden/libopencm3/<auto-detected-rev>/<target>/<peripheral>_<name>.elf
+  → writes golden/libopencm3/<auto-detected-rev>/<target>/<peripheral>_<name>.trace
+  → writes golden/libopencm3/<auto-detected-rev>/<target>/BUILD.txt (provenance, per target)
 
 # Capture for a specific git commit (reproducible from any working dir state)
 $ regtrace capture --library=libopencm3 --library-rev=v0.9.0 --vectors=vectors/
@@ -452,7 +460,7 @@ $ regtrace capture --library=libopencm3 --library-rev=v0.9.0 --vectors=vectors/
 $ regtrace capture --library=libopencm3 --library-rev=master --update
 
 # Re-extract a trace from an already-stored .elf (no compilation needed)
-$ regtrace re-extract golden/libopencm3/v0.9.0/stm32f1/timer_pwm_init.elf
+$ regtrace re-extract golden/libopencm3/v0.9.0/stm32f1/timer_pwm_init_center_aligned_16khz.elf
   → rewrites only the .trace, leaves .elf untouched
 ```
 
@@ -462,7 +470,7 @@ The `--library-rev` form checks out the requested commit/tag in a worktree, buil
 
 #### Clean-tree gating
 
-`<auto-detected-rev>` resolves via `git describe --tags --always --dirty` against the library's repo (so it picks tags when present, falls back to short commit, appends `-dirty` when the working tree has uncommitted changes).
+`<auto-detected-rev>` resolves via `git describe --tags --always --dirty` against the library's repo (so it picks tags when present, falls back to short commit, appends `-dirty` when the working tree has uncommitted changes). `git describe` is only used for auto-detection — when `--library-rev=<value>` is passed explicitly, the value is taken verbatim. This is how branch names like `master` end up as rev directories: `regtrace capture --library=libopencm3 --library-rev=master` writes under `golden/libopencm3/master/<target>/`. Using a branch name (rather than a tag/commit) means the rev directory tracks a moving target — fine for the rolling pre-release baseline, but explicitly opt-in.
 
 The dirty-tree policy is split by command:
 
@@ -476,7 +484,7 @@ Rationale: keeping the golden tree free of irreproducible artifacts is what make
 A behaviour-changing PR (deliberate register-default tweak, bug fix, silicon-erratum workaround) MUST update its target's goldens. The golden-file diff in the PR becomes the audit trail:
 
 ```
-$ git diff golden/libopencm3/master/stm32f1/timer_pwm_init.trace
+$ git diff golden/libopencm3/master/stm32f1/timer_pwm_init_center_aligned_16khz.trace
 - W4 <TIM1_BASE>+0x00 0x00000080
 + W4 <TIM1_BASE>+0x00 0x000000C0      # ARPE=1, URS=1 (this PR adds URS to suppress UEV on UG)
 ```
@@ -493,13 +501,12 @@ A *non-behaviour-changing* PR (refactor, code cleanup, comment update) MUST NOT 
 # Find the libopencm3 commit that changed the TIM1 init trace
 $ cd ~/dev/c/libopencm3
 $ git bisect start HEAD v0.8.0
-$ git bisect run regtrace verify \
-      --vector=timer_pwm_init_center_aligned_16khz \
+$ git bisect run regtrace compare timer_pwm_init_center_aligned_16khz \
       --target=stm32f1 \
-      --against=~/dev/regtrace/golden/libopencm3/v0.8.0/stm32f1/timer_pwm_init_center_aligned_16khz.trace
+      --against-trace=~/dev/regtrace/golden/libopencm3/v0.8.0/stm32f1/timer_pwm_init_center_aligned_16khz.trace
 ```
 
-`regtrace verify` exits 0 if the trace matches the golden, 1 if it differs — feeding `git bisect run` cleanly. Useful when a downstream user reports "my project's behavior changed after upgrading" — bisect reveals the responsible commit even when the original PR didn't realise it had a behavioural effect.
+`regtrace compare --against-trace=<path>` exits 0 if the freshly-extracted trace matches the named golden file, 1 if it differs — feeding `git bisect run` cleanly. Useful when a downstream user reports "my project's behavior changed after upgrading" — bisect reveals the responsible commit even when the original PR didn't realise it had a behavioural effect.
 
 ### 5. Per-peripheral share-or-split decision
 
@@ -562,11 +569,15 @@ These describe per-target peripheral memory layout used both to symbolise raw ad
 ## Workflow
 
 ```
-$ regtrace build vectors/                                        # compile all snippets for all (library, rev, target) combos
-$ regtrace trace build/libopencm3/<rev>/stm32f0/timer_pwm_init.elf   # extract trace from a specific ELF
-$ regtrace compare timer_pwm_init                                # compare across implementations (canonical pair from YAML)
-$ regtrace compare timer_pwm_init --all-pairs                    # render N×N matrix
-$ regtrace regression --baseline=golden/                         # run full regression
+$ regtrace build vectors/                                                            # compile all snippets for all (library, rev, target) combos
+$ regtrace trace build/libopencm3/<rev>/stm32f0/timer_pwm_init_center_aligned_16khz.elf   # extract trace from a specific ELF
+$ regtrace compare timer_pwm_init_center_aligned_16khz                               # compare across implementations (canonical pair from YAML)
+$ regtrace compare timer_pwm_init_center_aligned_16khz --all-pairs                   # render N×N matrix
+$ regtrace compare timer_pwm_init_center_aligned_16khz \
+      --against-trace=golden/libopencm3/v0.8.0/stm32f1/timer_pwm_init_center_aligned_16khz.trace   # diff against a stored golden
+$ regtrace regression --baseline=golden/                                             # run full regression against a golden tree
+$ regtrace re-extract golden/libopencm3/v0.8.0/stm32f1/timer_pwm_init_center_aligned_16khz.elf  # regenerate .trace from .elf
+$ regtrace clean --libs                                                              # evict ~/.cache/regtrace/libs/
 ```
 
 ## Comparison oracles
@@ -683,11 +694,11 @@ PASS — bootstrap valid
 
 # Gate 2: a single vector compiles for both implementations
 $ regtrace build vectors/timer/pwm_init_center_aligned_16khz.yaml
-[ok] gd-spl/v3.0.0/gd32f1x0  → build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init.elf  (size: ~2-5kb)
-[ok] libopencm3/<commit>/stm32f0 → build/libopencm3/<commit>/stm32f0/timer_pwm_init.elf
+[ok] gd-spl/v3.0.0/gd32f1x0  → build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init_center_aligned_16khz.elf  (size: ~2-5kb)
+[ok] libopencm3/<commit>/stm32f0 → build/libopencm3/<commit>/stm32f0/timer_pwm_init_center_aligned_16khz.elf
 
 # Gate 3: trace extraction produces non-empty output for both
-$ regtrace trace build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init.elf
+$ regtrace trace build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init_center_aligned_16khz.elf
 W4 <TIM1_BASE>+0x00 0x00000080
 W4 <TIM1_BASE>+0x2C 0x000008CA
 ... (≥3 register writes expected for any non-trivial init; emulation completes on LR sentinel)
@@ -700,9 +711,9 @@ exit 0
 
 # Gate 5: goldens captured and checked in
 $ ls golden/gd-spl/v3.0.0/gd32f1x0/
+BUILD.txt
 timer_pwm_init_center_aligned_16khz.elf
 timer_pwm_init_center_aligned_16khz.trace
-BUILD.txt
 
 # Gate 6: per-peripheral share-or-split decisions documented
 $ ls decisions/v0.1/
@@ -756,7 +767,7 @@ golden/libopencm3/master/stm32f0
 ... etc
 
 # Gate 2: regression runs deterministically
-$ regtrace regression --library=libopencm3 --against=v0.8.0
+$ regtrace regression --baseline=golden/libopencm3/v0.8.0/
 PASS — 47 vectors × 3 targets all match v0.8.0 goldens
 
 # Gate 3: a synthetic regression is detected
