@@ -1,0 +1,19 @@
+# Build / dist
+/build/                    # snippet ELF outputs at the repo root (NOT the source build/ subpackage)
+/dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/

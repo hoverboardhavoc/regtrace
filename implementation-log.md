@@ -68,4 +68,51 @@ read_responses:
 
 ## Implementation decisions made during build
 
-(Populated as implementation progresses.)
+### Python 3.14 (not 3.10)
+Spec requires ≥3.10. Only Python 3.14 is available on this system (Homebrew). Using 3.14; nothing in the deps requires <3.14.
+
+### `tomli` only on Python <3.11
+Standard-library `tomllib` exists from 3.11 onward. `pyproject.toml` makes `tomli` a conditional dep. `bootstrap.py` imports `tomllib` on 3.11+ and falls back to `tomli`.
+
+### `arm-none-eabi-gcc` install requires sudo — user action
+`brew install --cask gcc-arm-embedded` runs `installer -pkg` under `sudo`, which needs a terminal-attached password prompt. The autonomous install attempt failed:
+```
+sudo: a terminal is required to read the password
+```
+This is a one-time user action. The user should run:
+```
+! brew install --cask gcc-arm-embedded
+```
+in this session (the `!` prefix in Claude Code runs the command in the user's terminal). Build/trace gates will fail until the toolchain is on PATH.
+
+### `git-lfs` installed but not configured
+`git lfs install` (per-user) and `git lfs install --system` are user actions. The `.gitattributes` declares the LFS filter for `golden/**/*.elf`; the actual filter only kicks in once `git lfs install` has been run. v0.1 has no goldens checked in yet, so this isn't urgent.
+
+### CLI surface — small additions beyond SPEC.md
+- `compare --target=<id>` flag added to support `--against-trace=` from a bisect, where the target isn't always derivable from the vector context.
+- `selftest --target=<id>` accepts but ignores the flag at v0.1 (spec says it's v0.5+); printed warning.
+
+### `re-extract` as a top-level command, not a flag
+SPEC.md mentions `regtrace re-extract <golden.elf>` as its own command form. Implemented as `regtrace re-extract` rather than `compare --re-extract`.
+
+### Targets schema (v0.1 minimum)
+A target `.toml` declares: `peripheral_ranges` (list of address-range pairs to filter trace events to), `peripheral_bases` (symbolic base → numeric base map for symbolisation), `register_names` (per-base offset → name comment generator), `reset_values` (per-base offset → reset value to seed), and `bit_band_aliases` (only on Cortex-M3 — alias address → underlying-word mapping). For Cortex-M0/M0+ targets like stm32f0, `bit_band_aliases` is omitted.
+
+### Sentinel halt mechanism
+The vendored startup sets `LR = _sentinel | 1` (Thumb) and branches to `regtrace_test`. On return, execution falls into a `BKPT #0x55` instruction at `_sentinel`. Unicorn raises `UC_ERR_EXCEPTION` on BKPT; the extractor treats `(errno == UC_ERR_EXCEPTION) and (last_pc == SENTINEL_PC)` as a clean exit. No need for `until=` to land on the BKPT itself.
+
+### Extractor lazy MMIO mapping
+Unicorn requires every accessed page to be mapped or it raises `UC_ERR_READ_UNMAPPED` / `UC_ERR_WRITE_UNMAPPED`. Reset-value-seeded pages are mapped up front; everything else is mapped lazily from the `MEM_*_UNMAPPED` hooks (returning True to retry). Page granularity is 64 KiB so any peripheral cluster is covered in one map call.
+
+### Comparator address-key strategy
+`_diff_ordered` keys writes/reads on `(op, size, address_str, value)`. The `address_str` is symbolic (`<TIM1_BASE>+0x00`), which means traces compare across families: a write to TIM1+0x00 on stm32f0 matches a write to TIM1+0x00 on gd32f1x0 even though the numeric addresses differ. This is what makes share-or-split decisions work.
+
+### `assert_only` / `ignore` not yet wired into the comparator
+The schema validates and parses but the comparator doesn't apply the filter. Land in v0.2 alongside the `with_polling` mode work.
+
+### v0.1 gates — current status
+After scaffolding and component tests:
+- Gate 1 (`regtrace selftest`): passes everything except arm-none-eabi-gcc and the (uncloned) sibling repos. Once the toolchain is installed and `selftest --bootstrap` is run, this gate should pass.
+- Gates 2-5: blocked on arm-none-eabi-gcc.
+- Gate 6: blocked on Gates 2-5.
+- All Python-side components have unit-test coverage (16 tests, all passing).

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "regtrace"
+version = "0.1.0"
+description = "Register-trace comparison tool for validating that two HAL implementations produce equivalent peripheral configurations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MPL-2.0" }
+authors = [{ name = "regtrace contributors" }]
+dependencies = [
+    "unicorn>=2.0",
+    "capstone>=5.0",
+    "pyelftools>=0.30",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+regtrace = "regtrace.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/regtrace"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/regtrace",
+    "build_assets",
+    "targets",
+    "vectors",
+    "bootstrap.toml",
+    "SPEC.md",
+    "implementation-log.md",
+    "LICENSE",
+]

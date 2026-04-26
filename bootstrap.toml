@@ -1,0 +1,22 @@
+# bootstrap.toml — pinned commits for sibling repositories that regtrace
+# depends on. Bumping a pin is a deliberate act, usually paired with a golden
+# recapture; the commit history of this file doubles as an audit trail.
+#
+# Path interpolation: ${REGTRACE_WORKSPACE} is resolved by regtrace after
+# tomli-loading this file (this is non-standard TOML, applied as a custom
+# pass). Default workspace root is ~/dev/c/.
+
+[repos.libopencm3]
+url    = "https://github.com/libopencm3/libopencm3"
+commit = "7b6c2205"
+path   = "${REGTRACE_WORKSPACE}/libopencm3"
+
+[repos.GD32Firmware]
+url    = "https://github.com/CommunityGD32Cores/GD32Firmware"
+commit = "main"  # placeholder — pin to a specific commit before v0.1 capture
+path   = "${REGTRACE_WORKSPACE}/GD32Firmware"
+
+[repos.HoverboardFirmware]
+url    = "https://github.com/RoboDurden/Hoverboard-Firmware-Hack-Gen2.x-GD32"
+commit = "main"
+path   = "${REGTRACE_WORKSPACE}/Hoverboard-Firmware-Hack-Gen2.x-GD32"

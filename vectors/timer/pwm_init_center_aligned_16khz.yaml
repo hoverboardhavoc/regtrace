@@ -1,0 +1,29 @@
+name: pwm_init_center_aligned_16khz
+description: |
+  Center-aligned PWM @ 16 kHz, repetition counter = 1 to fire UPIF
+  once per period. The hoverboard FOC config used in production.
+
+mode: register_writes
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_timer.h]
+    body: |
+      timer_parameter_struct ts;
+      ts.alignedmode       = TIMER_COUNTER_CENTER_BOTH;
+      ts.counterdirection  = TIMER_COUNTER_UP;
+      ts.period            = 2250;
+      ts.prescaler         = 0;
+      ts.repetitioncounter = 1;
+      ts.clockdivision     = TIMER_CKDIV_DIV1;
+      timer_init(TIMER0, &ts);
+      timer_event_software_generate(TIMER0, TIMER_EVENT_SRC_UPG);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/timer.h]
+    body: |
+      timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
+      timer_set_period(TIM1, 2250);
+      timer_set_prescaler(TIM1, 0);
+      timer_set_repetition_counter(TIM1, 1);
+      timer_generate_event(TIM1, TIM_EGR_UG);
