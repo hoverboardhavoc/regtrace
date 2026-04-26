@@ -22,7 +22,7 @@ Today this is verified by reading the TRM, hand-tracing register pokes, or bench
 
 ## Non-goals
 
-- Full silicon emulation. We only model peripheral memory writes; we don't simulate timer counters, ADC SARs, DMA transfers, or interrupts.
+- Full silicon emulation. regtrace executes the snippet via a CPU-only emulator (Unicorn) to capture writes; we don't model peripheral responses — timer counters don't tick, ADC SARs don't sample, DMA doesn't transfer, interrupts don't fire. See "Approach → 2. Trace extraction" for what CPU-only execution does and does not cover.
 - Dynamic-state comparison. Polling loops, hardware-triggered events, time-dependent behaviour are out of scope.
 - Replacing bench validation. `regtrace` complements hardware testing; it does not replace it. Some bugs only surface when the silicon actually responds.
 
@@ -45,12 +45,15 @@ This project is intended to be developable end-to-end by an autonomous LLM agent
 Pin in `pyproject.toml` / `requirements.txt`:
 
 ```
-capstone>=5.0       # disassembly across ARM/RISC-V/etc.
-pyelftools>=0.30    # ELF parsing
+unicorn>=2.0        # CPU emulator — executes snippets, hooks memory writes/reads
+capstone>=5.0       # disassembly for trace annotation + source-line attribution
+pyelftools>=0.30    # ELF parsing + symbol resolution
 pyyaml>=6.0         # test-vector format
 click>=8.1          # CLI
 tomli>=2.0          # per-target metadata
 ```
+
+`unicorn` and `capstone` are sister projects (same author, paired API); the wheel ships its own native CPU-emulator core, no system QEMU install required.
 
 ### External repos to clone
 
@@ -63,6 +66,23 @@ The agent should clone these into known sibling paths under `~/dev/c/` (or whate
 | **Hoverboard firmware** (test-vector source) | https://github.com/RoboDurden/Hoverboard-Firmware-Hack-Gen2.x-GD32 | mine `Src/setup.c` + `Src/it.c` for representative API call sites. |
 | **GD32 PlatformIO platform** (build-system reference) | https://github.com/CommunityGD32Cores/platform-gd32 | how PIO drives SPL builds today; useful when porting later. |
 | **GD32 SPL package** (build-system reference) | https://github.com/CommunityGD32Cores/gd32-pio-spl-package | PIO wrapper around vendor SPL. |
+
+Pinned commits live in `bootstrap.toml` at the regtrace repo root:
+
+```toml
+# bootstrap.toml
+[repos.libopencm3]
+url    = "https://github.com/libopencm3/libopencm3"
+commit = "7b6c2205"          # bumped deliberately, paired with golden recapture
+path   = "${REGTRACE_WORKSPACE}/libopencm3"
+
+[repos.GD32Firmware]
+url    = "https://github.com/CommunityGD32Cores/GD32Firmware"
+commit = "<pinned>"
+path   = "${REGTRACE_WORKSPACE}/GD32Firmware"
+```
+
+`regtrace selftest --bootstrap` reads this file, clones missing repos at the pinned commit, and warns (non-fatal) if an existing checkout is at a different commit. `REGTRACE_WORKSPACE` defaults to `~/dev/c/` if unset; override per shell or per CI environment as needed. Bumping a pin is a deliberate act — usually paired with a golden recapture, so the commit history of `bootstrap.toml` doubles as an audit trail for "what changed about the oracle."
 
 ### Reference projects (for vector mining + idiom comparison)
 
@@ -107,11 +127,43 @@ This section is operational guidance for agents working on regtrace without huma
 
 ```
 ~/dev/regtrace/                 # this repo (the tool)
-~/dev/c/libopencm3/             # the HAL we're extending
-~/dev/c/GD32Firmware/           # vendor SPL mirror (oracle)
-~/dev/c/Hoverboard-Firmware-Hack-Gen2.x-GD32/  # test vector source
-~/dev/c/<reference projects>    # cloned as needed
+${REGTRACE_WORKSPACE}/libopencm3/             # the HAL we're extending
+${REGTRACE_WORKSPACE}/GD32Firmware/           # vendor SPL mirror (oracle)
+${REGTRACE_WORKSPACE}/Hoverboard-Firmware-Hack-Gen2.x-GD32/  # test vector source
+${REGTRACE_WORKSPACE}/<reference projects>    # cloned as needed
 ```
+
+`REGTRACE_WORKSPACE` defaults to `~/dev/c/` if unset.
+
+### Project layout
+
+regtrace itself uses Python's src-layout:
+
+```
+~/dev/regtrace/
+├── src/regtrace/                 # importable only after `pip install -e .`
+│   ├── __init__.py
+│   ├── build/                    # snippet build pipeline (gcc + linker)
+│   ├── trace/                    # Unicorn-based extractor
+│   ├── compare/                  # comparison engine
+│   └── ...
+├── pyproject.toml                # version is the single source of truth in [project].version
+├── bootstrap.toml                # pinned commits for sibling repos
+├── build_assets/<target>/        # vendored startup files + linker scripts (CMSIS-derived)
+├── targets/<family>.toml         # peripheral bases, register names, reset values, bit-band aliases
+├── vectors/<peripheral>/         # test vector YAMLs
+├── golden/<library>/<rev>/<target>/  # captured artifacts (.elf via LFS, .trace plain text)
+├── build/<library>/<rev>/<target>/   # ephemeral build output (mirror of golden/)
+├── decisions/<regtrace-version>/<peripheral>.md
+├── draft-prs/<regtrace-version>/
+└── ~/.cache/regtrace/libs/<library>/<rev>/<target>/lib<library>.a   # HAL static-lib cache
+```
+
+Conventions worth pinning:
+- **Version source of truth.** regtrace's own version lives once in `pyproject.toml` `[project].version`; runtime reads it via `importlib.metadata.version("regtrace")` and stamps it into trace headers and `decisions/` paths.
+- **Workspace root.** `REGTRACE_WORKSPACE` env var, default `~/dev/c/`. Used by `bootstrap.toml`'s `path` field via `${REGTRACE_WORKSPACE}` interpolation.
+- **HAL static-lib cache.** `~/.cache/regtrace/libs/<library>/<rev>/<target>/lib<library>.a`. Cache key includes gcc version + flags. First build of a `(library, rev, target)` combo takes ~30s; subsequent invocations are cached. `regtrace clean --libs` evicts.
+- **Build output mirrors goldens.** `build/<library>/<rev>/<target>/<vector>.elf` — same path scheme as `golden/`. `regtrace capture` is `regtrace build` plus a copy into `golden/` (with a `BUILD.txt` provenance file).
 
 ### Self-validation gates
 
@@ -137,14 +189,18 @@ The agent can verify its own bootstrap with:
 ```bash
 $ regtrace selftest
 [ok] arm-none-eabi-gcc 12.3.1 found
+[ok] unicorn 2.0.1.post1 available
 [ok] capstone 5.0.x available
 [ok] pyelftools 0.30+ available
-[ok] libopencm3 at ~/dev/c/libopencm3 (commit: 7b6c2205)
-[ok] GD32Firmware at ~/dev/c/GD32Firmware (branch: main)
+[ok] libopencm3 at ${REGTRACE_WORKSPACE}/libopencm3 (commit: 7b6c2205, matches bootstrap.toml pin)
+[ok] GD32Firmware at ${REGTRACE_WORKSPACE}/GD32Firmware (commit: <pinned>, matches bootstrap.toml pin)
 [ok] sample snippet compiles for stm32f0
+[ok] Unicorn emulates sample snippet to clean exit (LR sentinel hit)
 [ok] trace extractor produces non-empty output
 PASS — bootstrap valid
 ```
+
+`regtrace selftest` is read-only by default — it checks but does not mutate. Missing sibling repos cause a non-zero exit with an instruction to run `regtrace selftest --bootstrap`, which clones whatever's missing per `bootstrap.toml` (then re-runs the checks). Existing checkouts at a non-pinned commit produce a warning, not an error — the assumption is the operator knows what they're doing.
 
 Implemented in v0.1.
 
@@ -155,8 +211,8 @@ Documented decision tree for common stuck states:
 | symptom | likely cause | next step |
 |---|---|---|
 | "snippet compiles for libopencm3 but not for SPL" | missing system_<chip>.c or startup file | check `~/.platformio/packages/framework-spl-gd32/gd32/cmsis/`; copy or reference startup file. |
-| "trace is empty" | extractor didn't recognise stores in this snippet | check the snippet's disassembly via `arm-none-eabi-objdump -d`; verify there are stores to peripheral memory; if so, file extractor bug. |
-| "trace differs but I expected match" | check (1) compiler flags pinned, (2) bit-banding handled, (3) RMW resolved correctly. If all OK, the divergence is real. |
+| "trace is empty" | emulation didn't reach the test function (LR sentinel mis-set, fault on unmapped memory) or the function legitimately wrote no MMIO | re-run with `regtrace trace --debug` for the per-instruction execution log; verify the LR sentinel was hit cleanly (not the step cap) and that PC entered the test function. If clean exit and still empty, the function genuinely wrote no peripheral memory — check via `arm-none-eabi-objdump -d` that you expected it to. |
+| "trace differs but I expected match" | check (1) compiler flags pinned across both implementations, (2) bit-banding alias→underlying translation in the per-target write-hook (chips with bit-banding only), (3) reset values seeded for any registers the function reads before writing (per `targets/<chip>.toml`), (4) `read_responses` declared if the function polls, (5) emulation completed cleanly (LR sentinel, not step cap). If all OK, the divergence is real. |
 | "libopencm3 doesn't have driver for peripheral X" | expected at v0.1 stage — log it as an open peripheral, mine the SPL behavior, write down what would be needed. |
 | "vendor SPL function name not found in headers" | mismatched SPL version. Re-check version pin, or this peripheral isn't supported on this chip. |
 
@@ -181,6 +237,21 @@ description: |
 # distinguishes which chip family (gd32f1x0 vs stm32f0 vs gd32f10x ...).
 # Both are required because the same library can produce different
 # traces for different targets.
+
+# `default_compare:` declares the canonical pair for `regtrace compare <vector>`
+# with no explicit --against=. Required when 3+ implementations are declared;
+# auto-derived when exactly 2 are declared. `--all-pairs` overrides to render
+# the full N×N matrix (used by share-or-split decision generation).
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+# `read_responses:` (optional, v0.2+) maps peripheral read addresses to the
+# values Unicorn returns when the function reads them. Used by polling loops
+# (ADC calibration, HSE startup) to keep emulation deterministic — the loop
+# completes naturally and emulation reaches the function epilogue. Vectors
+# without polling don't need this field.
+# read_responses:
+#   <ADC_BASE>+0x08: 0x00      # CALOFR clears when calibration completes
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_timer.h]
@@ -225,27 +296,48 @@ Library-ids are chosen from a short, stable vocabulary:
 
 Target-ids match the chip-family naming used by the libraries and `targets/<family>.toml`: `gd32f1x0`, `gd32f10x`, `gd32e23x`, `stm32f0`, `stm32f1`, `stm32f4`, etc.
 
-The harness wraps each `body` in a `__attribute__((noinline))` test function with a fixed name, generates a tiny entry point, links against the appropriate HAL static library for the `library-id`/`target-id` combo, and produces an ELF.
+The harness wraps each `body` in a `__attribute__((noinline, used))` test function named `regtrace_test` (fixed — the extractor looks up this symbol via pyelftools to find the entry point), generates a tiny `_start` that branches to it, links against the appropriate HAL static library for the `library-id`/`target-id` combo, and produces an ELF.
+
+The build pipeline is owned end-to-end by regtrace — no PlatformIO or external build system on the critical path:
+
+- **Vendored startup files + linker scripts** live in `regtrace/build_assets/<target>/`. Minimal — reset vector, stack pointer, branch to the test function, `bkpt` sentinel after return. CMSIS-derived; copy-pasted, not generated, so they sit in source control where they can be reviewed.
+- **HAL static libraries** are built on demand (libopencm3 via its Makefile, SPL via a small per-family build recipe in regtrace) and cached at `~/.cache/regtrace/libs/<library>/<rev>/<target>/lib<library>.a`. Cache key includes gcc version + flags. First build of a `(library, rev, target)` combo takes ~30s; subsequent invocations are cached.
+- **Snippet ELFs** land in `build/<library>/<rev>/<target>/<vector>.elf` — same path scheme as `golden/` so `capture` is `build` + copy + provenance.
+- **Reproducibility.** Every build records gcc version, libopencm3/SPL commit, and compile flags into both `BUILD.txt` (per-version directory) and the `.trace` header. A fresh checkout at the same `bootstrap.toml` pins should reproduce byte-identical artifacts.
 
 ### 2. Trace extraction
 
-Disassemble the test function and identify writes to memory-mapped peripheral regions. The architecture-specific bits are:
+Execute the test function in a CPU-only emulator (Unicorn) and capture every memory access that targets a memory-mapped peripheral region. Unicorn is QEMU's TCG core extracted as a library — by the same author as Capstone, paired API. The architecture-specific bits are:
 
-- **Disassembly backend** — capstone (covers ARM, ARM64, RISC-V, MIPS, x86, PowerPC, Sparc, Xtensa-via-plugin, etc.).
-- **Peripheral address ranges** — declared per chip family, not per architecture. For Cortex-M3 STM32/GD32: SoC peripheral block `0x40000000`–`0x5FFFFFFF`, core peripherals `0xE0000000`–`0xE00FFFFF`. For RISC-V GD32VFx: different ranges. For ESP32, AVR, etc., declared as needed.
-- **Architecture quirks** — Cortex-M3 bit-banding aliases (only relevant on chips that have them); RISC-V Zicsr CSR access for some peripherals; AVR special-function-register space sitting in the same address space as RAM. Each is a per-target plugin.
+- **Emulator backend** — Unicorn. Supports ARM, ARM64, RISC-V (RV32/RV64), MIPS, x86, SPARC, M68K, S390X out of the box.
+- **Disassembler** — capstone, used post-hoc for trace annotation (`# CR1: ARPE=1` comments) and source-line attribution via DWARF — *not* for instruction recognition. Unicorn does the execution; capstone is explanation.
+- **Peripheral address ranges** — declared per chip family in `targets/<family>.toml`. For Cortex-M3 STM32/GD32: SoC peripheral block `0x40000000`–`0x5FFFFFFF`, core peripherals `0xE0000000`–`0xE00FFFFF`. For RISC-V GD32VFx: different ranges. For ESP32, AVR, etc., declared as needed.
+- **Architecture quirks** — Cortex-M3 bit-banding aliases are translated to underlying-word writes by the per-target write-hook (alias map in `targets/<chip>.toml`). RISC-V Zicsr CSR accesses are captured via Unicorn's CSR-access hook alongside the MMIO write-hook. AVR special-function-register space falls out as ordinary memory-mapped writes.
 
-Output: ordered list of `(register_address, value, store_size)` tuples, with peripheral base addresses normalised to symbolic names (e.g., `<TIM1_BASE>+0x00` rather than `0x40012C00`) so traces compare across target families.
+Execution flow:
 
-Implementation: Python with `capstone` for disassembly + `pyelftools` for symbol resolution. Dataflow walk to resolve register-relative stores back to their absolute target address. The dataflow walk is mostly architecture-agnostic; the load-store instruction recognition is the per-architecture seam.
+1. Load `.text` and `.data` from the snippet ELF into the Unicorn instance via pyelftools.
+2. Resolve the test-function entry symbol; set PC to its address.
+3. Set LR to a sentinel address mapped to a `bkpt` (or arch-equivalent) instruction; the emulator halts cleanly when the test function returns.
+4. Seed reset values into peripheral memory from `targets/<chip>.toml` so RMW sequences reading uninitialized registers see realistic values, not zero.
+5. Apply optional `read_responses` overrides from the vector YAML (v0.2+, for polling-loop completion).
+6. Register `UC_HOOK_MEM_WRITE` (filtered to peripheral address ranges) and `UC_HOOK_MEM_READ` (records reads for `with_polling` mode and re-extraction completeness).
+7. `uc.emu_start(begin=entry, until=sentinel, count=STEP_CAP)`. Emulation completes either on the sentinel (success) or on the step cap (logs a warning identifying the likely polling target from the last few PCs).
+8. Hook callbacks have appended trace entries during execution; finalize and write the `.trace`.
+
+Output: ordered list of `(operation, register_address, value, access_size)` tuples where operation is `W` (write) or `R` (read), with peripheral base addresses normalised to symbolic names (e.g., `<TIM1_BASE>+0x00` rather than `0x40012C00`) so traces compare across target families.
+
+Implementation: Python with `unicorn` for execution, `capstone` for trace annotation, `pyelftools` for ELF parsing + symbol resolution. The execution loop is architecture-agnostic; the per-architecture seam is the Unicorn arch flag plus the access-mode hooks (memory-mapped store, RISC-V CSR, x86 I/O port). Adding a new architecture is on the order of dozens of lines, not a new pattern set.
 
 ### 3. Comparison
 
 Three comparison modes per test vector, configurable:
 
-- **`register_writes`** — pure store sequence. Compare ordered list of writes. Default for init functions.
-- **`final_state`** — set-of-registers final value. Order-independent; assumes all writes start from a known reset state. Better for cases where bit-set order doesn't matter.
-- **`with_polling`** — recognise polling loops (load-compare-branch on the same address) and treat them as a unit. Compare initial config + verify polling target is the same. Used for ADC calibration, HSE startup, etc.
+- **`register_writes`** — ordered write sequence. Comparator looks at writes only; reads are recorded in the trace but ignored. Default for init functions.
+- **`final_state`** — unordered set of `(address, final_value)` after all writes have been replayed onto the reset-value baseline. Useful when bit-set order doesn't matter (the same bits ended up the same way).
+- **`with_polling`** — writes + reads, both ordered. The polling target is part of the assertion: two impls match only if they wrote the same registers in the same order *and* polled the same status address. Used for ADC calibration, HSE startup, etc. Requires `read_responses:` in the vector YAML to keep emulation deterministic; without it the polling loop spins to the step cap and fails the run with a clear message.
+
+All modes are **width-strict**: `W4` to address X never compares equal to `W2 + W2` covering the same bytes, even when the resulting memory state would be identical. Some peripheral registers respond only to specific access widths, and the trace records exactly what the CPU executed. If a real false-positive ever emerges from this strictness, the planned escape valve is per-mode "report width-only differences as a distinct diff category" rather than silent coalescing in the extractor (which would couple goldens to comparator policy — wrong layering).
 
 Per-vector metadata declares which mode applies.
 
@@ -281,7 +373,7 @@ golden/
 
 This lets you:
 - Diff any two `(library, version)` pairs for the same `(target, vector)` from text traces alone, no build env required.
-- Re-extract traces from stored `.elf` if regtrace's extractor improves (better dataflow analysis, new register-name maps).
+- Re-extract traces from stored `.elf` if regtrace's extractor improves (richer hook callbacks, new register-name maps, better source-line attribution).
 - `git bisect` libopencm3 between two versions to find the commit that changed a trace.
 - Track vendor SPL evolution across releases.
 - Verify trace integrity — text trace and stored binary should always agree.
@@ -292,7 +384,7 @@ The `.elf` is the canonical artifact for several reasons:
 
 - **Lowest barrier for PR reviewers.** A reviewer without arm-none-eabi-gcc / libopencm3 / Cube LL installed can still run `regtrace verify` against the stored `.elf` and confirm the proposed change matches expectations. Without binaries, every reviewer would need a full cross-compilation environment.
 - **Toolchain rot resistance.** Years from now, the exact gcc / libopencm3 / SPL combination used to capture a golden may not be reproducible. The stored `.elf` survives.
-- **Re-extractor compatibility.** If regtrace's analyzer adds a new feature (better RMW detection, additional register-name maps, support for a new architecture), re-running it against stored `.elf` regenerates richer traces without needing the original build env.
+- **Re-extractor compatibility.** If regtrace's extractor improves (richer hook callbacks, additional register-name maps, support for a new architecture, better source-line attribution), re-running it against the stored `.elf` regenerates richer traces without needing the original build env.
 - **Verification.** Text traces alone can be tampered with or hand-edited. The `.elf` + extractor produces the trace deterministically — a third party can confirm `regtrace trace <golden.elf> == golden.trace` exactly.
 
 #### Binary storage
@@ -323,6 +415,8 @@ Plain text, one record per line, sortable. Header metadata in `# ...` comments. 
 # target:        stm32f1
 # compiler:      arm-none-eabi-gcc 12.3.1 (xPack)
 # compile_flags: -Os -mcpu=cortex-m3 -mthumb
+# emulator:      unicorn 2.0.1.post1 (UC_ARCH_ARM, UC_MODE_THUMB)
+# emulation:     clean-exit (LR sentinel hit at instr 247)
 # mode:          register_writes      # register_writes | final_state | with_polling
 
 W4 <TIM1_BASE>+0x00 0x00000080         # CR1: ARPE=1
@@ -333,9 +427,10 @@ W2 <TIM1_BASE>+0x14 0x0001             # EGR: UG=1
 ```
 
 Format details:
-- **`Wn`** — write of `n` bytes (`W1` byte, `W2` half-word, `W4` word).
+- **`Wn` / `Rn`** — write or read of `n` bytes (`W1`/`R1` byte, `W2`/`R2` half-word, `W4`/`R4` word). Reads are always recorded by the extractor for re-extraction completeness; the comparator's mode controls whether they enter the diff (`with_polling` includes them; `register_writes` and `final_state` ignore them).
 - **Address** — peripheral base symbolised + offset, never raw hex. Bases come from a per-target map (e.g., `targets/stm32f1.toml` lists `TIM1_BASE = 0x40012C00`). Symbolisation makes traces compare across architectures and across chips that share peripheral layout.
-- **Value** — hex literal.
+- **Value** — hex literal. For reads, the value the read-hook returned (from `read_responses`, or the seeded reset value if no override).
+- **Width-strict comparison** — `W4` to address X never compares equal to `W2 + W2` covering the same bytes, even when the resulting memory state would be identical. Some peripheral registers respond only to specific access widths.
 - **Comment** — optional, generated from the per-target peripheral register-name map. Comments are advisory, ignored by the comparator.
 - **Order** — preserved (sequence-mode comparison). Set-mode comparators sort before diffing.
 
@@ -364,6 +459,17 @@ $ regtrace re-extract golden/libopencm3/v0.9.0/stm32f1/timer_pwm_init.elf
 The `--library-rev` form checks out the requested commit/tag in a worktree, builds, captures, and writes goldens under the right `golden/<library>/<rev>/` path. The user's primary checkout is untouched.
 
 `re-extract` is what runs when regtrace's analyzer improves and you want to refresh trace files without rebuilding.
+
+#### Clean-tree gating
+
+`<auto-detected-rev>` resolves via `git describe --tags --always --dirty` against the library's repo (so it picks tags when present, falls back to short commit, appends `-dirty` when the working tree has uncommitted changes).
+
+The dirty-tree policy is split by command:
+
+- `regtrace build` and `regtrace trace` accept dirty trees freely. Build artifacts may land in `build/libopencm3/7b6c2205-dirty/...` so iteration during HAL development isn't impeded.
+- `regtrace capture` (which writes into `golden/`) refuses to write goldens labelled with a `-dirty` rev by default. Override with `--allow-dirty`; the resulting goldens get `-dirty` baked into the rev component and are excluded from regression baselines (CI ignores `*-dirty` paths).
+
+Rationale: keeping the golden tree free of irreproducible artifacts is what makes the regression workflow trustworthy. Iteration freedom belongs to `build/`, not `golden/`. Note that "rev-clean" is necessary but not sufficient for byte-reproducibility — gcc version drift will also break it. The `BUILD.txt` provenance file captures gcc version so post-hoc reproduction is auditable.
 
 #### Refresh discipline
 
@@ -456,10 +562,11 @@ These describe per-target peripheral memory layout used both to symbolise raw ad
 ## Workflow
 
 ```
-$ regtrace build vectors/                        # compile all snippets for all targets
-$ regtrace trace build/timer_pwm_init.elf        # extract trace
-$ regtrace compare timer_pwm_init                # compare across implementations
-$ regtrace regression --baseline=golden/         # run full regression
+$ regtrace build vectors/                                        # compile all snippets for all (library, rev, target) combos
+$ regtrace trace build/libopencm3/<rev>/stm32f0/timer_pwm_init.elf   # extract trace from a specific ELF
+$ regtrace compare timer_pwm_init                                # compare across implementations (canonical pair from YAML)
+$ regtrace compare timer_pwm_init --all-pairs                    # render N×N matrix
+$ regtrace regression --baseline=golden/                         # run full regression
 ```
 
 ## Comparison oracles
@@ -499,19 +606,19 @@ For the hoverboard libopencm3 port, the peripherals to validate first:
 
 ## Caveats and known limitations
 
-- **Optimization-induced reordering.** `-Os` may reorder independent stores. The comparator should sort by `(address, value)` for set-comparison modes; preserve order for sequence-comparison modes. Always pin compiler version and flags.
-- **Inlined function-pointer stores.** Some HALs initialise function pointers (callbacks) via stores to RAM. These aren't peripheral writes; the trace extractor filters them out by address range.
-- **Bit-banding (Cortex-M3 only).** ARM Cortex-M3 has alias regions that turn writes-to-bit-band-address into atomic single-bit RMW. The extractor must recognise alias addresses and resolve them to the underlying word. Other architectures don't have this; per-target plugin handles it.
-- **RMW sequences.** `timer_interrupt_enable` reads CTL, ORs a mask, writes back. The extractor needs to capture load-store pairs and report the resulting write value, not just the raw store.
-- **Volatile memory layout differences.** SPL and libopencm3 may layout the *same* C struct differently in DMA buffers (alignment, padding). Cross-comparison should distinguish "different padding" from "different register state".
-- **Out-of-scope: dynamic state.** Timer counters running, ADC SAR converting, DMA transferring, IRQ priority interactions. `regtrace` is static analysis only.
-- **Architecture-specific peripheral access modes.** Most architectures use memory-mapped peripheral access (covered cleanly). Some (RISC-V Zicsr CSRs, AVR I/O space, x86 IN/OUT) use special instructions. Each requires per-architecture extraction logic.
+- **Optimization-induced reordering.** `-Os` may reorder independent stores. Cortex-M cores execute in instruction order, so emulation observes whatever order gcc emitted; the comparator preserves order for sequence-comparison modes and sorts by `(address, value, size)` for set-comparison modes. Always pin compiler version and flags.
+- **Inlined function-pointer stores.** Some HALs initialise function pointers (callbacks) via stores to RAM. The peripheral write-hook is filtered by address range, so RAM writes never enter the trace.
+- **Bit-banding (Cortex-M3 only).** ARM Cortex-M3 has alias regions that turn writes-to-bit-band-address into atomic single-bit RMW. The per-target write-hook recognises alias addresses and translates them to the underlying-word write before recording. Other architectures don't have this; the alias map lives in `targets/<chip>.toml`.
+- **RMW sequences.** Unicorn executes `ldr → orr → str` natively, so the resulting write is captured with the correct merged value — no special handling required. The load source is the seeded peripheral memory state (reset values from `targets/<chip>.toml`, plus any prior writes from the same trace).
+- **Volatile memory layout differences.** SPL and libopencm3 may layout the *same* C struct differently in DMA buffers (alignment, padding). RAM writes are out of trace scope (filtered by address range), so layout differences don't cause spurious diffs — but they also can't be detected. A separate validation tool would be needed for RAM-resident state.
+- **Out-of-scope: peripheral simulation.** regtrace executes the snippet via a CPU-only emulator (Unicorn) — peripherals do not respond. Timer counters don't tick, ADC SAR doesn't convert, DMA doesn't transfer, interrupts don't fire. Polling loops are completed via `read_responses` in the vector YAML; loops without responses spin to the step cap and produce a clear warning identifying the polling target. Anyone needing actual behavioural validation should integrate a system emulator (Renode) separately.
+- **Architecture-specific peripheral access modes.** Most architectures use memory-mapped peripheral access (covered by the standard `UC_HOOK_MEM_WRITE`). Some (RISC-V Zicsr CSRs, x86 IN/OUT) use special instructions; Unicorn exposes architecture-appropriate hooks (CSR-access hook for RISC-V, I/O-port hook for x86) and the comparator treats all access modes uniformly. AVR I/O-space writes are memory-mapped (in AVR's address space) and need no special handling.
 
 ## Implementation language
 
-Python with `capstone` (disassembly) + `pyelftools` (ELF parsing). Both are standard, MIT/BSD licensed, and well-maintained. Familiar enough for people doing embedded review.
+Python with `unicorn` (CPU execution), `capstone` (trace annotation, source-line attribution), and `pyelftools` (ELF parsing + symbol resolution). All three are MIT/BSD licensed and well-maintained; Unicorn and Capstone are by the same author (Nguyen Anh Quynh) and pair cleanly — same architecture flags, compatible address conventions. Familiar enough for people doing embedded review.
 
-Rust with `goblin` + `bad64` is a possible alternative if performance becomes an issue at scale. Not currently warranted.
+Rust alternatives exist (`goblin` for ELF, `unicorn-rs` bindings for execution) if performance becomes an issue at scale. Not currently warranted — emulation of a 50-instruction snippet completes in milliseconds.
 
 ## Licensing
 
@@ -576,14 +683,14 @@ PASS — bootstrap valid
 
 # Gate 2: a single vector compiles for both implementations
 $ regtrace build vectors/timer/pwm_init_center_aligned_16khz.yaml
-[ok] gd-spl/gd32f1x0 → build/v0.1/.../timer_pwm_init.elf (size: ~2-5kb)
-[ok] libopencm3/stm32f0 → build/v0.1/.../timer_pwm_init.elf
+[ok] gd-spl/v3.0.0/gd32f1x0  → build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init.elf  (size: ~2-5kb)
+[ok] libopencm3/<commit>/stm32f0 → build/libopencm3/<commit>/stm32f0/timer_pwm_init.elf
 
 # Gate 3: trace extraction produces non-empty output for both
-$ regtrace trace build/v0.1/gd-spl/gd32f1x0/timer_pwm_init.elf
+$ regtrace trace build/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init.elf
 W4 <TIM1_BASE>+0x00 0x00000080
 W4 <TIM1_BASE>+0x2C 0x000008CA
-... (≥3 register writes expected for any non-trivial init)
+... (≥3 register writes expected for any non-trivial init; emulation completes on LR sentinel)
 
 # Gate 4: comparison produces a structured diff
 $ regtrace compare timer_pwm_init_center_aligned_16khz \
@@ -622,7 +729,7 @@ $ ls vectors/iwdg/*.yaml | wc -l      # ≥1
 
 # Gate 2: with_polling mode handles ADC calibration without spurious diffs
 $ regtrace compare adc_calibration_enable --against=gd-spl/gd32f1x0,libopencm3/stm32f0
-match: ... (polling structure recognised, body comparison passes)
+match: ... (writes + reads both compared; polling target identical across both impls; emulation completed cleanly via read_responses)
 
 # Gate 3: all v0.2 peripherals produce a decision document
 $ ls decisions/v0.2/
@@ -707,14 +814,14 @@ gd32f10x-timer-PR-DESCRIPTION.md
 ### v0.6+ — Architecture extension
 
 **Scope:**
-- RISC-V backend for the trace extractor (capstone supports RV32/RV64).
+- RISC-V backend for the trace extractor (Unicorn supports RV32/RV64; capstone supports them for trace annotation).
 - First target: `GD32VF103` (RISC-V variant from same vendor).
-- The architecture seam is the disassembly + load-store recognition; everything else (snippet harness, comparison modes, golden file format) is reusable as-is.
+- The architecture seam is the Unicorn arch flag (`UC_ARCH_RISCV`) plus per-architecture access hooks (MMIO write-hook plus CSR-access hook for Zicsr); everything else (snippet harness, comparison modes, golden file format) is reusable as-is. Adding an architecture is on the order of dozens of lines, not a new pattern set.
 
 **Validation gates:**
 ```bash
 # Gate 1: RISC-V backend extracts traces
-$ regtrace trace build/v0.6/.../riscv_snippet.elf
+$ regtrace trace build/gd-spl/<rev>/gd32vf103/riscv_snippet.elf
 W4 <TIMx_BASE>+0x00 0x000000080  ... (non-empty)
 
 # Gate 2: GD32VF103 produces a vector that compares against gd-spl
@@ -754,16 +861,40 @@ These are decisions an agent will encounter; recording them so they're answered 
 - ~~**Auto-select comparison modes?**~~ **Decided: always declared in vector metadata.** Each YAML vector declares its `mode:` explicitly. Reasoning: only three modes, easy to choose between, declaration is one line, no silent-failure risk if the auto-detector misclassifies. Defer auto-detection to a future major version if it ever becomes painful.
 - ~~**Trace minimisation mode?**~~ **Decided: yes, land in v0.2.** Each vector may declare optional `assert_only:` (whitelist) or `ignore:` (blacklist) address ranges to filter the trace before comparison. Example: `assert_only: [<TIM1_BASE>+0x00..0x44]` strips out unrelated RCU clock-enable writes that vary by HAL. Caveat documented in the YAML schema's docstring: too-narrow filtering could mask real bugs (e.g., a missing clock-enable). Use sparingly and prefer comparing the full trace where possible.
 - ~~**Cube LL pinning strategy?**~~ **Decided: git submodule pinned by tag**, located at `oracles/cube/STM32CubeFx/`. Each Cube family submodule is opt-in (`git submodule update --init oracles/cube/STM32CubeF1` only when needed) so a default clone stays small. Reproducibility matters more than disk space — goldens are byte-deterministic only if the source they were captured against is bit-identically available. Upgrade path: file an issue → bump submodule → recapture goldens with explicit commit message.
-- ~~**Decision-document format?**~~ **Decided: fixed markdown template** at `decisions/<version>/<peripheral>.md`, codified in `decisions/TEMPLATE.md`. Schema:
-  - `Decision`: strict vocabulary — `share` / `share-with-shim` / `share-with-macro` / `split`.
-  - `Confidence`: `empirical` (all vectors traced), `partial` (peripheral coverage incomplete), `inferred` (TRM-reading only, no traces — discouraged).
-  - `Evidence`: links to specific trace files.
-  - `Implementation sketch`: shape of the actual code change.
-  - `Draft PR`: link to a `.patch` in the regtrace repo, or `TBD`. **Never auto-opened upstream.**
+- ~~**Decision-document format?**~~ **Decided: fixed markdown template** at `decisions/<regtrace-version>/<peripheral>.md`, codified in `decisions/TEMPLATE.md`. The `<regtrace-version>` directory anchors the decision to the analysis tooling that produced it; library-version context lives in YAML frontmatter so each file is reproducible from its own contents:
+
+  ```markdown
+  ---
+  regtrace_version: v0.1
+  date: 2026-04-26
+  peripheral: TIMER
+  decision: share          # share | share-with-shim | share-with-macro | split
+  confidence: empirical    # empirical | partial | inferred
+  libraries_compared:
+    - name: libopencm3
+      rev: master
+      commit: 7b6c2205
+      target: stm32f0
+    - name: gd-spl
+      rev: v3.0.0
+      target: gd32f1x0
+  evidence:
+    - golden/libopencm3/master/stm32f0/timer_pwm_init_center_aligned_16khz.trace
+    - golden/gd-spl/v3.0.0/gd32f1x0/timer_pwm_init_center_aligned_16khz.trace
+  draft_pr: TBD            # path to .patch in draft-prs/<regtrace-version>/, or TBD
+  ---
+
+  # TIMER share-or-split decision
+
+  ## Implementation sketch
+  ...
+  ```
+
+  Re-running the analysis under regtrace v0.3 produces `decisions/v0.3/TIMER.md` with updated frontmatter; both files coexist as the audit trail. **Draft PRs are never auto-opened upstream** — a human controls when (or if) the patch lands.
 - ~~**What library-id to use for the hoverboard's `target.h` macro shims?**~~ **Decided: no separate library-id; expand the macros to raw SPL calls** in the YAML `body`. Vectors must NOT `#include "target.h"` — that would couple them to whatever the hoverboard's wrappers happen to compile to (including bugs in those wrappers, e.g., the broken `pinModeAF` macro on F103 silicon that we discovered while building this project). A vector for "F103 PWM init" describes the canonical SPL call sequence — `gpio_init(GPIOA, GPIO_MODE_AF_PP, GPIO_OSPEED_2MHZ, GPIO_PIN_8)` etc. — independent of any project-specific macro layer. Self-contained, reproducible across hoverboard revisions, and the regtrace traces become the source of truth for "what the silicon should look like" rather than echoing whatever wrapper is in fashion.
 - ~~**Handling RAM-resident peripherals (DMA buffers, vector tables)?**~~ **Decided: filter to peripheral-MMIO ranges only.** Only writes to ranges declared as peripheral in `targets/<chip>.toml` enter the trace. RAM writes (DMA buffer init, vector-table relocation, static config struct population) are filtered out. Trade-off: a HAL that forgets to zero-init a DMA buffer when the other one does won't show as a diff. Comparing DMA buffer state or vector-table relocation is out of scope for regtrace — would need a separate validation tool. Documented in the YAML schema's caveats.
-- ~~**CSR access on RISC-V?**~~ **Decided: defer to v0.6+ (RISC-V backend).** The Cortex-M v0.1-v0.5 path is unaffected — ARM uses memory-mapped peripherals exclusively, even for NVIC/SCB at `0xE000E000`. When the RISC-V backend lands, the disassembly plugin recognises `csrrw`/`csrrs`/`csrrc` instructions alongside memory-mapped stores, with the comparator treating both uniformly. Architecture-specific code lives in the disassembly plugin, doesn't leak into the comparator.
-- ~~**Should regtrace try to run snippets in QEMU/Renode?**~~ **Decided: out of scope for v1.0.** Static trace comparison stays the focus — different problem from dynamic emulation. Anyone needing "would this configuration actually run?" should integrate Renode separately. Logged as a v2 idea, not on the v0.1-v1.0 roadmap.
+- ~~**CSR access on RISC-V?**~~ **Decided: defer to v0.6+ (RISC-V backend).** The Cortex-M v0.1-v0.5 path is unaffected — ARM uses memory-mapped peripherals exclusively, even for NVIC/SCB at `0xE000E000`. When the RISC-V backend lands, Unicorn's RISC-V model executes `csrrw`/`csrrs`/`csrrc` instructions natively and exposes a CSR-access hook; we register it alongside the MMIO write-hook, with the comparator treating both access modes uniformly. The architecture seam is the Unicorn arch flag plus per-architecture access hooks, not pattern-matching in disassembly.
+- ~~**Should regtrace try to run snippets in QEMU/Renode?**~~ **Clarified: CPU-only emulation (Unicorn) yes, system emulation (QEMU/Renode) no.** Trace extraction uses Unicorn — a CPU-core-only emulator (built from QEMU's TCG core, by the same author as Capstone) that traps memory writes via hooks. Peripherals are not modelled; polling loops complete via `read_responses` from the vector YAML. Full system emulation (QEMU's machine models, Renode's platform descriptions) remains out of scope through v1.0 — that's behavioural validation, a different problem. Anyone needing "would this configuration actually drive the silicon as expected?" should integrate Renode separately. Logged as a v2 idea.
 
 ## Reference implementations to follow
 
@@ -778,7 +909,7 @@ When building regtrace, structurally similar prior art:
   Open-source bindiff alternative, runs in IDA. Newer, more actively developed than BinDiff. Same problem domain.
 
 - **angr** — https://github.com/angr/angr
-  Symbolic execution framework for binaries. Overkill for our needs but useful reference for "extract semantic state from compiled code." Their VEX IR translation handles many architectures — worth understanding if we extend regtrace beyond Cortex-M + RISC-V.
+  Symbolic execution framework for binaries. We considered symbolic execution and rejected it as overkill — for our problem (executing known snippets we control) Unicorn-style concrete emulation is a much better fit than path exploration. Worth a read if regtrace ever needs path-sensitive analysis (e.g., "what register state is reachable via *any* call sequence" rather than "what state does *this* call sequence produce").
 
 **Golden-file regression testing patterns:**
 
@@ -791,21 +922,24 @@ When building regtrace, structurally similar prior art:
 - **prettier**'s test fixtures — https://github.com/prettier/prettier/tree/main/tests
   Same idiom — golden output checked into the repo, regenerated explicitly.
 
-**ELF + disassembly libraries:**
+**ELF + execution + disassembly libraries:**
 
-- **pyelftools** — https://github.com/eliben/pyelftools
-  Primary dependency for ELF parsing. Well-documented; example scripts in the repo.
+- **unicorn** — https://github.com/unicorn-engine/unicorn (Python bindings: https://www.unicorn-engine.org/docs/tutorial.html)
+  Primary execution dependency. Multi-architecture CPU emulator extracted from QEMU's TCG core. Supports ARM/ARM64/RISC-V/MIPS/x86/SPARC/M68K/S390X with a uniform Python API. Memory hooks (`UC_HOOK_MEM_WRITE`, `UC_HOOK_MEM_READ`) are exactly the seam we need for trace extraction.
 
 - **capstone** — https://github.com/capstone-engine/capstone (Python bindings: https://www.capstone-engine.org/lang_python.html)
-  Multi-architecture disassembler. Supports ARM/ARM64/RISC-V/MIPS/x86/PowerPC/Sparc out of the box.
+  Multi-architecture disassembler by the same author as Unicorn. Used post-hoc for trace annotation and source-line attribution; not load-bearing for capture itself. Same arch flags as Unicorn — paired API.
 
-- **goblin** (Rust alternative for ELF parsing) — https://github.com/m4b/goblin
+- **pyelftools** — https://github.com/eliben/pyelftools
+  ELF parsing + symbol resolution. Well-documented; example scripts in the repo.
+
+- **goblin** + **unicorn-rs** (Rust alternatives) — https://github.com/m4b/goblin, https://github.com/unicorn-rs/unicorn-rs
   Reference if regtrace ever needs Rust performance.
 
 **Cross-architecture compiled-test validation (less direct relevance, similar mindset):**
 
 - **glibc test framework** — https://sourceware.org/glibc/
-  Tests compile and run against the library; behavior is validated empirically. We're doing static rather than dynamic validation, but the "compile a small test, validate behavior" loop is similar. (The wiki page on testing has moved several times; start at the project home and follow links to "Contributing" → testing.)
+  Tests compile and run against the library; behavior is validated empirically. Our CPU-only emulation is a similar shape: compile a small snippet, execute it, validate observable effects (in our case, peripheral writes rather than libc behavior). (The wiki page on testing has moved several times; start at the project home and follow links to "Contributing" → testing.)
 
 **Per-peripheral validation precedents in embedded:**
 
