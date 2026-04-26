@@ -50,3 +50,15 @@ implementations:
       LL_IWDG_SetPrescaler(IWDG, LL_IWDG_PRESCALER_16);
       LL_IWDG_SetReloadCounter(IWDG, 0x0FFF);
       LL_IWDG_Enable(IWDG);
+
+  gd-spl/gd32f10x:
+    includes: [gd32f10x.h, gd32f10x_fwdgt.h]
+    body: |
+      fwdgt_config(0x0FFF, FWDGT_PSC_DIV16);
+      fwdgt_enable();
+
+  libopencm3/gd32f10x:
+    includes: [libopencm3/stm32/iwdg.h]
+    body: |
+      iwdg_set_period_ms(2048);
+      iwdg_start();

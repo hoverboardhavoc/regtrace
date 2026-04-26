@@ -59,3 +59,16 @@ implementations:
       ts.RepetitionCounter = 1;
       LL_TIM_Init(TIM1, &ts);
       LL_TIM_GenerateEvent_UPDATE(TIM1);
+
+  gd-spl/gd32f10x:
+    includes: [gd32f10x.h, gd32f10x_timer.h]
+    body: |
+      timer_parameter_struct ts;
+      ts.alignedmode       = TIMER_COUNTER_CENTER_BOTH;
+      ts.counterdirection  = TIMER_COUNTER_UP;
+      ts.period            = 2250;
+      ts.prescaler         = 0;
+      ts.repetitioncounter = 1;
+      ts.clockdivision     = TIMER_CKDIV_DIV1;
+      timer_init(TIMER0, &ts);
+      timer_event_software_generate(TIMER0, TIMER_EVENT_SRC_UPG);

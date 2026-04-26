@@ -1,0 +1,27 @@
+# regtrace v0.1.0 — captured 2026-04-26T19:14:03Z
+# vector:         timer_pwm_init_center_aligned_16khz
+# library:        gd-spl
+# library_commit: 4ead0d8
+# target:         gd32f1x0
+# compiler:       arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+# compile_flags:  -Os -mcpu=cortex-m3 -mthumb -fno-common -ffreestanding -fno-builtin -Wall
+# emulator:       unicorn 2.1.4 (UC_ARCH_ARM, UC_MODE_THUMB)
+# emulation:      clean-exit (LR sentinel hit at instr 57)
+# mode:           final_state
+W4 <TIM1_BASE>+0x28 0x00000000         # PSC
+R4 <TIM1_BASE>+0x00 0x00000000         # CR1
+W4 <TIM1_BASE>+0x00 0x00000000         # CR1
+R4 <TIM1_BASE>+0x00 0x00000000         # CR1
+W4 <TIM1_BASE>+0x00 0x00000060         # CR1
+R4 <TIM1_BASE>+0x00 0x00000060         # CR1
+W4 <TIM1_BASE>+0x00 0x00000060         # CR1
+W4 <TIM1_BASE>+0x2C 0x000008CA         # ARR
+R4 <TIM1_BASE>+0x00 0x00000060         # CR1
+W4 <TIM1_BASE>+0x00 0x00000060         # CR1
+R4 <TIM1_BASE>+0x00 0x00000060         # CR1
+W4 <TIM1_BASE>+0x00 0x00000060         # CR1
+W4 <TIM1_BASE>+0x30 0x00000001         # RCR
+R4 <TIM1_BASE>+0x14 0x00000000         # EGR
+W4 <TIM1_BASE>+0x14 0x00000001         # EGR
+R4 <TIM1_BASE>+0x14 0x00000001         # EGR
+W4 <TIM1_BASE>+0x14 0x00000001         # EGR

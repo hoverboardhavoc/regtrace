@@ -1,0 +1,430 @@
+From 6563813309ac5b142115c74eefbaa0dc66c5685a Mon Sep 17 00:00:00 2001
+From: hoverboardhavoc <hoverboardhavoc.county449@passmail.net>
+Date: Sun, 26 Apr 2026 21:20:47 +0200
+Subject: [PATCH] =?UTF-8?q?gd32/f10x:=20initial=20port=20stub=20=E2=80=94?=
+ =?UTF-8?q?=20TIMER=20+=20IWDG=20via=20stm32=20common=20drivers?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This is the first slice of GD32F10x (F101/F103/F105/F107) support for
+libopencm3. The F10x family is register-compatible with STM32F1 for the
+peripherals included here, so this PR adds the stub directories and
+forwarders without duplicating any driver code.
+
+Empirically validated by regtrace v0.5: TIM1 + IWDG register-write traces
+captured from the GigaDevice F10x SPL match the libopencm3 stm32/common
+drivers byte-for-byte in `final_state` mode. Cross-checked against:
+- libopencm3 stm32/f0, stm32/f1, stm32/f4
+- GigaDevice SPL F10x and F1x0
+- STMicro Cube LL stm32f1
+All 15 cross-impl pairs match for both vectors. Decision documents and
+goldens at:
+  https://github.com/<...>/regtrace/blob/main/decisions/v0.5/TIMER.md
+  https://github.com/<...>/regtrace/blob/main/decisions/v0.5/IWDG.md
+
+What this PR adds:
+- include/libopencm3/gd32/f10x/{memorymap,timer,iwdg,rcc,doc-gd32f10x}.h
+- lib/gd32/f10x/Makefile (OBJS: timer_common_all.o + iwdg_common_all.o)
+- GD32F10X branch in include/libopencm3/{gd32,stm32}/memorymap.h dispatchers
+- GD32F10X branch in include/libopencm3/stm32/{timer,iwdg,rcc}.h dispatchers
+
+`make TARGETS=gd32/f10x lib` builds cleanly. STM32 targets are unaffected
+(the new dispatcher branches are only taken when -DGD32F10X is set).
+
+What this PR does NOT add (deferred to follow-up PRs as their share-or-
+split decisions are made empirically): GPIO, USART, DMA, I2C, ADC, SPI,
+FLASH dedicated GD32F10x sources. The rcc.h forwarder to stm32/f1/rcc.h
+is provisional pending an explicit RCC vector and decisions/<v>/RCC.md.
+---
+ include/libopencm3/gd32/f10x/doc-gd32f10x.h | 22 ++++++
+ include/libopencm3/gd32/f10x/iwdg.h         | 41 +++++++++++
+ include/libopencm3/gd32/f10x/memorymap.h    | 82 +++++++++++++++++++++
+ include/libopencm3/gd32/f10x/rcc.h          | 41 +++++++++++
+ include/libopencm3/gd32/f10x/timer.h        | 38 ++++++++++
+ include/libopencm3/gd32/memorymap.h         |  2 +
+ include/libopencm3/stm32/iwdg.h             |  2 +
+ include/libopencm3/stm32/memorymap.h        |  2 +
+ include/libopencm3/stm32/rcc.h              |  2 +
+ include/libopencm3/stm32/timer.h            |  2 +
+ lib/gd32/f10x/Makefile                      | 44 +++++++++++
+ 11 files changed, 278 insertions(+)
+ create mode 100644 include/libopencm3/gd32/f10x/doc-gd32f10x.h
+ create mode 100644 include/libopencm3/gd32/f10x/iwdg.h
+ create mode 100644 include/libopencm3/gd32/f10x/memorymap.h
+ create mode 100644 include/libopencm3/gd32/f10x/rcc.h
+ create mode 100644 include/libopencm3/gd32/f10x/timer.h
+ create mode 100644 lib/gd32/f10x/Makefile
+
+diff --git a/include/libopencm3/gd32/f10x/doc-gd32f10x.h b/include/libopencm3/gd32/f10x/doc-gd32f10x.h
+new file mode 100644
+index 00000000..101eba9a
+--- /dev/null
++++ b/include/libopencm3/gd32/f10x/doc-gd32f10x.h
+@@ -0,0 +1,22 @@
++/**
++
++@mainpage libopencm3 GD32F10x
++
++@version 1.0.0
++
++API documentation for GigaDevice GD32F10x Cortex-M3 series microcontrollers.
++
++LGPL License Terms @ref lgpl_license
++
++*/
++
++/** @defgroup peripheral_apis Peripheral APIs
++ * APIs for device peripherals
++ */
++
++/** @defgroup GD32F10x_defines GD32F10x Defines
++ *
++ * @brief Defined Constants and Types for the GD32F10x series
++ *
++ * LGPL License Terms @ref lgpl_license
++*/
+diff --git a/include/libopencm3/gd32/f10x/iwdg.h b/include/libopencm3/gd32/f10x/iwdg.h
+new file mode 100644
+index 00000000..3d802203
+--- /dev/null
++++ b/include/libopencm3/gd32/f10x/iwdg.h
+@@ -0,0 +1,41 @@
++/** @defgroup iwdg_defines IWDG Defines
++ *
++ * @brief <b>Defined Constants and Types for the GD32F10x Independent
++ * Watchdog Timer</b>
++ *
++ * @ingroup GD32F10x_defines
++ *
++ * @version 1.0.0
++ *
++ * LGPL License Terms @ref lgpl_license
++ */
++/*
++ * This file is part of the libopencm3 project.
++ *
++ * This library is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Lesser General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBOPENCM3_IWDG_H
++#define LIBOPENCM3_IWDG_H
++
++/* GD32F10x IWDG (vendor name FWDGT) is register-compatible with STM32F1 IWDG.
++ * Empirically validated by regtrace v0.5 (decisions/v0.5/IWDG.md): same KR
++ * magic constants (0x5555 / 0xAAAA / 0xCCCC), same PR/RLR/SR layout. Final
++ * state matches across all 6 implementations compared (gd-spl, libopencm3,
++ * cube-ll). The F10x port uses the legacy iwdg_common_all header (matching
++ * STM32F1) — not iwdg_common_v2 (which adds WINR/EWCR for newer parts).
++ */
++#include <libopencm3/stm32/common/iwdg_common_all.h>
++
++#endif
+diff --git a/include/libopencm3/gd32/f10x/memorymap.h b/include/libopencm3/gd32/f10x/memorymap.h
+new file mode 100644
+index 00000000..0eee3ba1
+--- /dev/null
++++ b/include/libopencm3/gd32/f10x/memorymap.h
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of the libopencm3 project.
++ *
++ * GD32F10x peripheral memory map. The F10x family (F101/F103/F105/F107) is
++ * register-compatible with STM32F1 — symbol names mirror the STM32F1 layout
++ * intentionally so common drivers can be shared.
++ *
++ * This library is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Lesser General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBOPENCM3_MEMORYMAP_H
++#define LIBOPENCM3_MEMORYMAP_H
++
++#include <libopencm3/cm3/memorymap.h>
++
++#define FLASH_BASE			(0x08000000U)
++#define PERIPH_BASE			(0x40000000U)
++#define INFO_BASE			(0x1ffff000U)
++
++#define PERIPH_BASE_APB1		(PERIPH_BASE + 0x00000)
++#define PERIPH_BASE_APB2		(PERIPH_BASE + 0x10000)
++#define PERIPH_BASE_AHB			(PERIPH_BASE + 0x20000)
++
++/* APB1 */
++#define TIM2_BASE			(PERIPH_BASE_APB1 + 0x0000)
++#define TIM3_BASE			(PERIPH_BASE_APB1 + 0x0400)
++#define TIM4_BASE			(PERIPH_BASE_APB1 + 0x0800)
++#define TIM5_BASE			(PERIPH_BASE_APB1 + 0x0c00)
++#define TIM6_BASE			(PERIPH_BASE_APB1 + 0x1000)
++#define TIM7_BASE			(PERIPH_BASE_APB1 + 0x1400)
++#define RTC_BASE			(PERIPH_BASE_APB1 + 0x2800)
++#define WWDG_BASE			(PERIPH_BASE_APB1 + 0x2c00)
++#define IWDG_BASE			(PERIPH_BASE_APB1 + 0x3000)
++#define SPI2_BASE			(PERIPH_BASE_APB1 + 0x3800)
++#define SPI3_BASE			(PERIPH_BASE_APB1 + 0x3c00)
++#define USART2_BASE			(PERIPH_BASE_APB1 + 0x4400)
++#define USART3_BASE			(PERIPH_BASE_APB1 + 0x4800)
++#define UART4_BASE			(PERIPH_BASE_APB1 + 0x4c00)
++#define UART5_BASE			(PERIPH_BASE_APB1 + 0x5000)
++#define I2C1_BASE			(PERIPH_BASE_APB1 + 0x5400)
++#define I2C2_BASE			(PERIPH_BASE_APB1 + 0x5800)
++#define POWER_CONTROL_BASE		(PERIPH_BASE_APB1 + 0x7000)
++
++/* APB2 */
++#define AFIO_BASE			(PERIPH_BASE_APB2 + 0x0000)
++#define EXTI_BASE			(PERIPH_BASE_APB2 + 0x0400)
++#define GPIO_PORT_A_BASE		(PERIPH_BASE_APB2 + 0x0800)
++#define GPIO_PORT_B_BASE		(PERIPH_BASE_APB2 + 0x0c00)
++#define GPIO_PORT_C_BASE		(PERIPH_BASE_APB2 + 0x1000)
++#define GPIO_PORT_D_BASE		(PERIPH_BASE_APB2 + 0x1400)
++#define GPIO_PORT_E_BASE		(PERIPH_BASE_APB2 + 0x1800)
++#define GPIO_PORT_F_BASE		(PERIPH_BASE_APB2 + 0x1c00)
++#define GPIO_PORT_G_BASE		(PERIPH_BASE_APB2 + 0x2000)
++#define ADC1_BASE			(PERIPH_BASE_APB2 + 0x2400)
++#define ADC2_BASE			(PERIPH_BASE_APB2 + 0x2800)
++#define TIM1_BASE			(PERIPH_BASE_APB2 + 0x2c00)
++#define SPI1_BASE			(PERIPH_BASE_APB2 + 0x3000)
++#define TIM8_BASE			(PERIPH_BASE_APB2 + 0x3400)
++#define USART1_BASE			(PERIPH_BASE_APB2 + 0x3800)
++#define ADC3_BASE			(PERIPH_BASE_APB2 + 0x3c00)
++
++/* AHB */
++#define DMA1_BASE			(PERIPH_BASE_AHB + 0x0000)
++#define DMA2_BASE			(PERIPH_BASE_AHB + 0x0400)
++#define RCC_BASE			(PERIPH_BASE_AHB + 0x1000)
++#define FLASH_MEM_INTERFACE_BASE	(PERIPH_BASE_AHB + 0x2000)
++#define CRC_BASE			(PERIPH_BASE_AHB + 0x3000)
++
++/* Cortex-M3 private peripheral block — provided by libopencm3/cm3/memorymap.h */
++
++#endif
+diff --git a/include/libopencm3/gd32/f10x/rcc.h b/include/libopencm3/gd32/f10x/rcc.h
+new file mode 100644
+index 00000000..6763cd1c
+--- /dev/null
++++ b/include/libopencm3/gd32/f10x/rcc.h
+@@ -0,0 +1,41 @@
++/** @defgroup rcc_defines RCC Defines
++ *
++ * @brief <b>Defined Constants and Types for the GD32F10x Reset and Clock
++ * Control</b>
++ *
++ * @ingroup GD32F10x_defines
++ *
++ * @version 1.0.0
++ *
++ * LGPL License Terms @ref lgpl_license
++ */
++/*
++ * This file is part of the libopencm3 project.
++ *
++ * This library is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Lesser General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBOPENCM3_RCC_H
++#define LIBOPENCM3_RCC_H
++
++/* The GD32F10x RCU is largely STM32F1-compatible at the register level. This
++ * v0.5 stub forwards to stm32/f1/rcc.h to unblock TIMER + IWDG support; a
++ * dedicated regtrace RCC vector + decisions/<version>/RCC.md analysis is
++ * planned for a follow-up release before this becomes load-bearing for
++ * GD32F10x clock-tree code. Until then, downstream code using anything
++ * beyond the basic clock-enable bits should validate against gd-spl traces.
++ */
++#include <libopencm3/stm32/f1/rcc.h>
++
++#endif
+diff --git a/include/libopencm3/gd32/f10x/timer.h b/include/libopencm3/gd32/f10x/timer.h
+new file mode 100644
+index 00000000..0055fef0
+--- /dev/null
++++ b/include/libopencm3/gd32/f10x/timer.h
+@@ -0,0 +1,38 @@
++/** @defgroup timer_defines TIMER Defines
++ *
++ * @brief <b>Defined Constants and Types for the GD32F10x Timer</b>
++ *
++ * @ingroup GD32F10x_defines
++ *
++ * @version 1.0.0
++ *
++ * LGPL License Terms @ref lgpl_license
++ */
++/*
++ * This file is part of the libopencm3 project.
++ *
++ * This library is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Lesser General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBOPENCM3_TIMER_H
++#define LIBOPENCM3_TIMER_H
++
++/* GD32F10x timers are register-compatible with STM32F1. Empirically validated
++ * by regtrace v0.5 (decisions/v0.5/TIMER.md): same TIM1 register layout, same
++ * bit positions, same final-state behaviour as STM32F1 across a 6-impl
++ * all-pairs comparison (gd-spl, libopencm3, cube-ll on F0/F1/F4 + GD F1x0/F10x).
++ */
++#include <libopencm3/stm32/common/timer_common_all.h>
++
++#endif
+diff --git a/include/libopencm3/gd32/memorymap.h b/include/libopencm3/gd32/memorymap.h
+index f751fadc..5435ccb6 100644
+--- a/include/libopencm3/gd32/memorymap.h
++++ b/include/libopencm3/gd32/memorymap.h
+@@ -22,6 +22,8 @@
+ 
+ #if defined(GD32F1X0)
+ #	include <libopencm3/gd32/f1x0/memorymap.h>
++#elif defined(GD32F10X)
++#	include <libopencm3/gd32/f10x/memorymap.h>
+ #else
+ #	error "gd32 family not defined."
+ #endif
+diff --git a/include/libopencm3/stm32/iwdg.h b/include/libopencm3/stm32/iwdg.h
+index d91c7cb5..b8864ea2 100644
+--- a/include/libopencm3/stm32/iwdg.h
++++ b/include/libopencm3/stm32/iwdg.h
+@@ -22,6 +22,8 @@
+ 
+ #if defined(STM32F0)
+ #       include <libopencm3/stm32/f0/iwdg.h>
++#elif defined(GD32F10X)
++#       include <libopencm3/gd32/f10x/iwdg.h>
+ #elif defined(STM32F1)
+ #       include <libopencm3/stm32/f1/iwdg.h>
+ #elif defined(STM32F2)
+diff --git a/include/libopencm3/stm32/memorymap.h b/include/libopencm3/stm32/memorymap.h
+index 1b1c911c..ae4c4ac9 100644
+--- a/include/libopencm3/stm32/memorymap.h
++++ b/include/libopencm3/stm32/memorymap.h
+@@ -48,6 +48,8 @@
+ #       include <libopencm3/stm32/u5/memorymap.h>
+ #elif defined(GD32F1X0)
+ #       include <libopencm3/gd32/f1x0/memorymap.h>
++#elif defined(GD32F10X)
++#       include <libopencm3/gd32/f10x/memorymap.h>
+ #else
+ #	error "stm32 family not defined."
+ #endif
+diff --git a/include/libopencm3/stm32/rcc.h b/include/libopencm3/stm32/rcc.h
+index 15eb0694..d7184287 100644
+--- a/include/libopencm3/stm32/rcc.h
++++ b/include/libopencm3/stm32/rcc.h
+@@ -22,6 +22,8 @@
+ 
+ #if defined(STM32F0)
+ #       include <libopencm3/stm32/f0/rcc.h>
++#elif defined(GD32F10X)
++#       include <libopencm3/gd32/f10x/rcc.h>
+ #elif defined(STM32F1)
+ #       include <libopencm3/stm32/f1/rcc.h>
+ #elif defined(STM32F2)
+diff --git a/include/libopencm3/stm32/timer.h b/include/libopencm3/stm32/timer.h
+index 8a476194..8b7ea596 100644
+--- a/include/libopencm3/stm32/timer.h
++++ b/include/libopencm3/stm32/timer.h
+@@ -24,6 +24,8 @@
+ 
+ #if defined(STM32F0)
+ #       include <libopencm3/stm32/f0/timer.h>
++#elif defined(GD32F10X)
++#       include <libopencm3/gd32/f10x/timer.h>
+ #elif defined(STM32F1)
+ #       include <libopencm3/stm32/f1/timer.h>
+ #elif defined(STM32F2)
+diff --git a/lib/gd32/f10x/Makefile b/lib/gd32/f10x/Makefile
+new file mode 100644
+index 00000000..636b2a18
+--- /dev/null
++++ b/lib/gd32/f10x/Makefile
+@@ -0,0 +1,44 @@
++##
++## This file is part of the libopencm3 project.
++##
++## Copyright (C) 2026 regtrace contributors
++##
++## This library is free software: you can redistribute it and/or modify
++## it under the terms of the GNU Lesser General Public License as published by
++## the Free Software Foundation, either version 3 of the License, or
++## (at your option) any later version.
++##
++## This library is distributed in the hope that it will be useful,
++## but WITHOUT ANY WARRANTY; without even the implied warranty of
++## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++## GNU Lesser General Public License for more details.
++##
++## You should have received a copy of the GNU Lesser General Public License
++## along with this library.  If not, see <http://www.gnu.org/licenses/>.
++##
++
++LIBNAME		= libopencm3_gd32f10x
++SRCLIBDIR	?= ../..
++
++CC		= $(PREFIX)gcc
++AR		= $(PREFIX)ar
++TGT_CFLAGS	= -Os \
++		  -Wall -Wextra -Wimplicit-function-declaration \
++		  -Wredundant-decls -Wmissing-prototypes -Wstrict-prototypes \
++		  -Wundef -Wshadow \
++		  -I../../../include -fno-common \
++		  -mcpu=cortex-m3 $(FP_FLAGS) -mthumb -Wstrict-prototypes \
++		  -ffunction-sections -fdata-sections -MD -DGD32F10X
++TGT_CFLAGS      += $(DEBUG_FLAGS)
++ARFLAGS		= rcs
++
++# Initial v0.5 stub: TIMER + IWDG, validated as register-compatible with
++# STM32F1 by regtrace (see decisions/v0.5/{TIMER,IWDG}.md). Other peripherals
++# (GPIO, RCC, FLASH, USART, DMA, I2C, ADC) follow in subsequent PRs as their
++# share-or-split decisions are made.
++OBJS += iwdg_common_all.o
++OBJS += timer_common_all.o
++
++VPATH += ../:../../cm3:../common:../../stm32/common
++
++include ../../Makefile.include
+-- 
+2.50.1 (Apple Git-155)
+

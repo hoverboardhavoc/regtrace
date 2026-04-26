@@ -41,6 +41,8 @@ LIBOPENCM3_TARGET_MAP = {
     # gd32f1x0 stub exists on libopencm3 master but has no peripherals yet at
     # v0.1; declared here for forward-compatibility.
     "gd32f1x0": ("gd32/f1x0", "opencm3_gd32f1x0"),
+    # gd32f10x stub added by the v0.5 draft patch (TIMER + IWDG).
+    "gd32f10x": ("gd32/f10x", "opencm3_gd32f10x"),
 }
 
 
@@ -58,6 +60,16 @@ GD_SPL_LAYOUT = {
         # core_cmInstr.h / core_cmFunc.h alongside. We vendor minimal stubs.
         "build_assets_includes": ["cmsis-stubs"],
         "chip_define": "GD32F130_150",
+    },
+    "gd32f10x": {
+        "src_dir":     "GD32F10x/GD32F10x_standard_peripheral/Source",
+        "include_dirs": [
+            "GD32F10x/GD32F10x_standard_peripheral/Include",
+            "GD32F10x/CMSIS/GD/GD32F10x/Include",
+            "GD32F10x/CMSIS",
+        ],
+        "build_assets_includes": ["cmsis-stubs"],
+        "chip_define": "GD32F10X_HD",   # F103C8 / F103RB / F103VB density
     },
 }
 

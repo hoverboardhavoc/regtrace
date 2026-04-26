@@ -35,6 +35,8 @@ TARGET_FLAGS: dict[str, tuple[str, ...]] = {
                 "-fno-builtin", "-Wall"),
     "gd32f1x0": ("-Os", "-mcpu=cortex-m3", "-mthumb", "-fno-common", "-ffreestanding",
                  "-fno-builtin", "-Wall"),
+    "gd32f10x": ("-Os", "-mcpu=cortex-m3", "-mthumb", "-fno-common", "-ffreestanding",
+                 "-fno-builtin", "-Wall"),
 }
 
 
@@ -131,6 +133,7 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
                 "stm32f1": "STM32F1",
                 "stm32f4": "STM32F4",
                 "gd32f1x0": "GD32F1X0",
+                "gd32f10x": "GD32F10X",
             }[target]
             extra_defines.append(f"-D{target_define}")
         elif library in {"gd-spl", "gd-spl-patched"}:
