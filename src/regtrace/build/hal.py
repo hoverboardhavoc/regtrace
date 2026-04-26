@@ -71,6 +71,19 @@ GD_SPL_LAYOUT = {
         "build_assets_includes": ["cmsis-stubs"],
         "chip_define": "GD32F10X_HD",   # F103C8 / F103RB / F103VB density
     },
+    "gd32vf103": {
+        "src_dir":     "GD32VF10x/GD32VF103_standard_peripheral/Source",
+        "include_dirs": [
+            "GD32VF10x/GD32VF103_standard_peripheral/Include",
+            "GD32VF10x/GD32VF103_standard_peripheral",   # gd32vf103.h is here, not Include/
+            "GD32VF10x/RISCV/drivers",
+            "GD32VF10x/RISCV/stubs",
+        ],
+        "build_assets_includes": ["cmsis-stubs"],
+        # Pick a board variant so HXTAL_VALUE is set; chip define is also
+        # GD32VF103 (the SPL keys behaviour off it).
+        "chip_define": "GD32VF103C_START",
+    },
 }
 
 
@@ -204,6 +217,11 @@ def build_libopencm3(target: str, rev: str, compile_flags: tuple[str, ...]) -> P
     return store(key, artifact)
 
 
+def _toolchain_prefix(target: str) -> str:
+    from .pipeline import toolchain_prefix
+    return toolchain_prefix(target)
+
+
 def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
                  patched: bool = False) -> Path:
     """Build (or fetch from cache) the GD32 vendor SPL for `target`.
@@ -243,10 +261,12 @@ def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
     print(f"[build] gd-spl {target} ({len(sources)} source files) at {tree} (rev {rev})")
     with tempfile.TemporaryDirectory(prefix="regtrace-gd-spl-") as tmpdir:
         tmp = Path(tmpdir)
+        gcc = f"{_toolchain_prefix(target)}gcc"
+        ar  = f"{_toolchain_prefix(target)}ar"
         for src in sources:
             obj = tmp / f"{src.stem}.o"
             cmd = [
-                "arm-none-eabi-gcc",
+                gcc,
                 *compile_flags,
                 f"-D{chip_define}",
                 "-DUSE_STDPERIPH_DRIVER",
@@ -269,7 +289,7 @@ def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
                   f"(typically depend on USB or features outside our scope); excluded from archive")
 
         archive = tmp / f"lib{library.replace('-', '_')}.a"
-        ar_cmd = ["arm-none-eabi-ar", "rcs", str(archive)] + [str(o) for o in objs]
+        ar_cmd = [ar, "rcs", str(archive)] + [str(o) for o in objs]
         subprocess.check_call(ar_cmd)
         return store(key, archive)
 

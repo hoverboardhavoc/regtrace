@@ -1,0 +1,5 @@
+library:       gd-spl
+rev:           4ead0d8
+target:        gd32vf103
+compiler:      arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+compile_flags: -Os -march=rv32imac_zicsr_zifencei -mabi=ilp32 -fno-common -ffreestanding -fno-builtin -Wall

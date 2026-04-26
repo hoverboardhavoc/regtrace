@@ -37,7 +37,21 @@ TARGET_FLAGS: dict[str, tuple[str, ...]] = {
                  "-fno-builtin", "-Wall"),
     "gd32f10x": ("-Os", "-mcpu=cortex-m3", "-mthumb", "-fno-common", "-ffreestanding",
                  "-fno-builtin", "-Wall"),
+    # RISC-V GD32VF103 (Nuclei N200, RV32IMAC).
+    "gd32vf103": ("-Os", "-march=rv32imac_zicsr_zifencei", "-mabi=ilp32",
+                  "-fno-common", "-ffreestanding", "-fno-builtin", "-Wall"),
 }
+
+
+# Per-target toolchain prefix. Falls back to arm-none-eabi for any target
+# not listed (the v0.1-v0.5 ARM-only assumption).
+TARGET_TOOLCHAIN_PREFIX: dict[str, str] = {
+    "gd32vf103": "riscv-none-elf-",
+}
+
+
+def toolchain_prefix(target: str) -> str:
+    return TARGET_TOOLCHAIN_PREFIX.get(target, "arm-none-eabi-")
 
 
 # When a HAL needs warnings demoted (vendor SPL has many) or a specific
@@ -54,6 +68,15 @@ LIBRARY_EXTRA_FLAGS: dict[str, tuple[str, ...]] = {
     "cube-ll":        ("-std=gnu11",
                        "-Wno-unused-but-set-variable", "-Wno-unused-variable",
                        "-Wno-comment", "-Wno-pointer-sign"),
+}
+
+
+# Per-target extra flags — applied in addition to LIBRARY_EXTRA_FLAGS.
+TARGET_EXTRA_FLAGS: dict[str, tuple[str, ...]] = {
+    # gd32vf103 SPL also typedefs `bool`; needs gnu11 like the ARM SPLs.
+    "gd32vf103": ("-std=gnu11", "-Wno-unused-but-set-variable",
+                  "-Wno-unused-variable", "-Wno-comment",
+                  "-Wno-implicit-function-declaration"),
 }
 
 
@@ -103,7 +126,7 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
             f"missing build_assets/{library}/{target}/ — vendor startup.S + link.ld there"
         )
 
-    library_flags = flags + LIBRARY_EXTRA_FLAGS.get(library, ())
+    library_flags = flags + LIBRARY_EXTRA_FLAGS.get(library, ()) + TARGET_EXTRA_FLAGS.get(target, ())
     lib_a = hal.build_hal(library, target, actual_rev, library_flags)
     out_dir = build_dir(library, actual_rev, target)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +177,7 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
             extra_defines.append("-DUSE_FULL_LL_DRIVER")
 
         cmd = [
-            "arm-none-eabi-gcc",
+            f"{toolchain_prefix(target)}gcc",
             *library_flags,
             *extra_defines,
             *(f"-I{d}" for d in include_dirs),

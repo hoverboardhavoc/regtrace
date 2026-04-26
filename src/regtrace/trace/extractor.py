@@ -227,9 +227,15 @@ def extract(
     """Run the snippet under Unicorn, capturing peripheral writes/reads."""
     info = load_elf(elf_path)
 
-    if target.unicorn_arch != "arm":
+    if target.unicorn_arch == "arm":
+        uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_THUMB)
+        is_riscv = False
+    elif target.unicorn_arch == "riscv":
+        # RISC-V mode is RISCV32 for GD32VF103 (RV32IMAC).
+        uc = unicorn.Uc(unicorn.UC_ARCH_RISCV, unicorn.UC_MODE_RISCV32)
+        is_riscv = True
+    else:
         raise NotImplementedError(f"unicorn_arch {target.unicorn_arch!r} not yet supported")
-    uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_THUMB)
     mapped: dict[int, int] = {}
 
     # Map and load ELF segments.
@@ -240,10 +246,15 @@ def extract(
     # Map RAM/stack.
     _ensure_mapped(uc, mapped, STACK_BASE, STACK_SIZE)
 
-    # Map sentinel page and write a bkpt instruction at SENTINEL_PC.
+    # Map sentinel page and write a halt instruction at SENTINEL_PC.
     _ensure_mapped(uc, mapped, SENTINEL_BASE, SENTINEL_SIZE)
-    # Thumb BKPT #0 = 0xBE00. We use #0x55 (0xBE55) for grep-ability.
-    uc.mem_write(SENTINEL_PC, b"\x55\xBE")
+    if is_riscv:
+        # RISC-V `ebreak` is the equivalent of ARM Thumb BKPT — encoded as
+        # 0x00100073 (32-bit) or 0x9002 (compressed). Use the 32-bit form.
+        uc.mem_write(SENTINEL_PC, b"\x73\x00\x10\x00")
+    else:
+        # Thumb BKPT #0x55 = 0xBE55 (little-endian).
+        uc.mem_write(SENTINEL_PC, b"\x55\xBE")
 
     # Map peripheral ranges lazily on first access via UC_HOOK_MEM_INVALID,
     # but seeding reset values requires mapping them up front. So map any base
@@ -308,9 +319,15 @@ def extract(
     )
 
     # Initialise registers.
-    uc.reg_write(unicorn.arm_const.UC_ARM_REG_SP, STACK_TOP)
-    uc.reg_write(unicorn.arm_const.UC_ARM_REG_LR, SENTINEL_PC | 1)  # Thumb
-    pc = info.entry_addr | 1  # Ensure Thumb mode
+    if is_riscv:
+        from unicorn import riscv_const
+        uc.reg_write(riscv_const.UC_RISCV_REG_SP, STACK_TOP)
+        uc.reg_write(riscv_const.UC_RISCV_REG_RA, SENTINEL_PC)
+        pc = info.entry_addr  # RISC-V doesn't have the Thumb LSB convention
+    else:
+        uc.reg_write(unicorn.arm_const.UC_ARM_REG_SP, STACK_TOP)
+        uc.reg_write(unicorn.arm_const.UC_ARM_REG_LR, SENTINEL_PC | 1)  # Thumb
+        pc = info.entry_addr | 1  # Ensure Thumb mode
 
     last_pc = pc
     instr_count = 0
@@ -330,14 +347,17 @@ def extract(
 
     emulation_status = "clean-exit"
     try:
-        # `until=` triggers UC_ERR_OK when PC == until_address; bkpt also halts cleanly.
-        uc.emu_start(pc & ~1 | 1, SENTINEL_PC | 0, count=step_cap)
-        emulation_status = f"clean-exit (LR sentinel hit at instr {instr_count})"
+        if is_riscv:
+            uc.emu_start(pc, SENTINEL_PC, count=step_cap)
+        else:
+            uc.emu_start(pc & ~1 | 1, SENTINEL_PC | 0, count=step_cap)
+        emulation_status = f"clean-exit (sentinel hit at instr {instr_count})"
     except unicorn.UcError as e:
-        # BKPT raises UC_ERR_EXCEPTION on most builds, which is the expected
-        # halt path. Treat that as a clean exit too.
+        # BKPT/EBREAK raises UC_ERR_EXCEPTION on most builds, which is the
+        # expected halt path. Treat that as a clean exit too.
         if e.errno == unicorn.UC_ERR_EXCEPTION and (last_pc & ~1) == SENTINEL_PC:
-            emulation_status = f"clean-exit (BKPT sentinel at instr {instr_count})"
+            kind = "EBREAK" if is_riscv else "BKPT"
+            emulation_status = f"clean-exit ({kind} sentinel at instr {instr_count})"
         else:
             emulation_status = f"emulation-error: {e} (last pc=0x{last_pc:08X}, instr {instr_count})"
     if instr_count >= step_cap:
@@ -345,9 +365,11 @@ def extract(
             f"step-cap-hit ({step_cap} instrs); likely polling target near pc=0x{last_pc:08X}"
         )
 
+    arch_str = ("UC_ARCH_RISCV, UC_MODE_RISCV32" if is_riscv
+                else "UC_ARCH_ARM, UC_MODE_THUMB")
     header = TraceHeader(
         target=target.name,
-        emulator=f"unicorn {unicorn.__version__} (UC_ARCH_ARM, UC_MODE_THUMB)",
+        emulator=f"unicorn {unicorn.__version__} ({arch_str})",
         emulation=emulation_status,
         mode=vector.mode if vector else "register_writes",
     )

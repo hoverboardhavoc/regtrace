@@ -72,3 +72,16 @@ implementations:
       ts.clockdivision     = TIMER_CKDIV_DIV1;
       timer_init(TIMER0, &ts);
       timer_event_software_generate(TIMER0, TIMER_EVENT_SRC_UPG);
+
+  gd-spl/gd32vf103:
+    includes: [gd32vf103.h, gd32vf103_timer.h]
+    body: |
+      timer_parameter_struct ts;
+      ts.alignedmode       = TIMER_COUNTER_CENTER_BOTH;
+      ts.counterdirection  = TIMER_COUNTER_UP;
+      ts.period            = 2250;
+      ts.prescaler         = 0;
+      ts.repetitioncounter = 1;
+      ts.clockdivision     = TIMER_CKDIV_DIV1;
+      timer_init(TIMER0, &ts);
+      timer_event_software_generate(TIMER0, TIMER_EVENT_SRC_UPG);
