@@ -1,0 +1,40 @@
+name: init_115200_8n1
+description: |
+  Configure USART1 for 115200 baud, 8 data bits, no parity, 1 stop bit,
+  TX+RX enabled, and enable. The hoverboard pattern (setup.c L696-L713).
+
+  Note: gd-spl computes baud divisor at runtime from a stored peripheral
+  clock value (set by SystemInit, which we don't run); libopencm3 takes
+  the desired bus-clock frequency from a constant (set via rcc_periph
+  setup, which we also don't run). Both fall back to compile-time defaults
+  if their frequency tables are unset — this means the BAUD register
+  value will likely diverge. The vector ignores BAUD via `ignore` so the
+  comparison focuses on CR1/CR2/CR3 config bits.
+
+mode: final_state
+
+ignore:
+  - <USART1_BASE>+0x0C   # USART_BRR — baud divisor depends on assumed clock
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_usart.h]
+    body: |
+      usart_baudrate_set(USART0, 115200);
+      usart_parity_config(USART0, USART_PM_NONE);
+      usart_word_length_set(USART0, USART_WL_8BIT);
+      usart_stop_bit_set(USART0, USART_STB_1BIT);
+      usart_transmit_config(USART0, USART_TRANSMIT_ENABLE);
+      usart_receive_config(USART0, USART_RECEIVE_ENABLE);
+      usart_enable(USART0);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/usart.h]
+    body: |
+      usart_set_baudrate(USART1, 115200);
+      usart_set_parity(USART1, USART_PARITY_NONE);
+      usart_set_databits(USART1, 8);
+      usart_set_stopbits(USART1, USART_STOPBITS_1);
+      usart_set_mode(USART1, USART_MODE_TX_RX);
+      usart_set_flow_control(USART1, USART_FLOWCONTROL_NONE);
+      usart_enable(USART1);

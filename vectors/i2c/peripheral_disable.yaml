@@ -1,0 +1,20 @@
+name: peripheral_disable
+description: |
+  Disable the I2C peripheral. Single-call vector to isolate the PE / I2CEN
+  bit-clear path. Both v1 and v2 I2C use the same control-register bit
+  for "peripheral enable" (bit 0 of CTL0/CR1), so this vector should at
+  least produce a write to the same bit pattern, even though the rest of
+  the peripheral has different layouts.
+
+mode: final_state
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_i2c.h]
+    body: |
+      i2c_disable(I2C0);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/i2c.h]
+    body: |
+      i2c_peripheral_disable(I2C1);

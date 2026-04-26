@@ -1,0 +1,19 @@
+name: transfer_complete_irq
+description: |
+  Enable the transfer-complete interrupt on a DMA channel. Mined from the
+  hoverboard ADC DMA setup (setup.c L512:
+  TARGET_dma_interrupt_enable(DMA_CH0, DMA_CHXCTL_FTFIE)). One-call vector
+  to isolate the IRQ-enable register write from the larger init sequence.
+
+mode: final_state
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_dma.h]
+    body: |
+      dma_interrupt_enable(DMA_CH0, DMA_CHXCTL_FTFIE);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);

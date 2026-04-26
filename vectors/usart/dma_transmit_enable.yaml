@@ -1,0 +1,17 @@
+name: dma_transmit_enable
+description: |
+  Enable DMA-driven USART transmit (sets the DMAT bit in CR3 / CTL2).
+  Mined from hoverboard comms patterns where USART TX feeds from DMA.
+
+mode: final_state
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_usart.h]
+    body: |
+      usart_dma_transmit_config(USART0, USART_DENT_ENABLE);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/usart.h]
+    body: |
+      usart_enable_tx_dma(USART1);

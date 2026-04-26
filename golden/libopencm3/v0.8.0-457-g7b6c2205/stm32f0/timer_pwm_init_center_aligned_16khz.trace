@@ -1,4 +1,4 @@
-# regtrace v0.1.0 — captured 2026-04-26T17:37:21Z
+# regtrace v0.1.0 — captured 2026-04-26T18:32:34Z
 # vector:         timer_pwm_init_center_aligned_16khz
 # library:        libopencm3
 # library_commit: v0.8.0-457-g7b6c2205
@@ -7,7 +7,7 @@
 # compile_flags:  -Os -mcpu=cortex-m0 -mthumb -fno-common -ffreestanding -fno-builtin -Wall
 # emulator:       unicorn 2.1.4 (UC_ARCH_ARM, UC_MODE_THUMB)
 # emulation:      clean-exit (LR sentinel hit at instr 38)
-# mode:           register_writes
+# mode:           final_state
 R4 <TIM1_BASE>+0x00 0x00000000         # CR1
 W4 <TIM1_BASE>+0x00 0x00000060         # CR1
 W4 <TIM1_BASE>+0x2C 0x000008CA         # ARR

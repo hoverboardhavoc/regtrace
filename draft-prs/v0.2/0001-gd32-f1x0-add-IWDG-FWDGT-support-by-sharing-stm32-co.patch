@@ -1,0 +1,99 @@
+From d7e20526217c7a58633760257a6a1446aff6aa9a Mon Sep 17 00:00:00 2001
+From: hoverboardhavoc <hoverboardhavoc.county449@passmail.net>
+Date: Sun, 26 Apr 2026 20:37:11 +0200
+Subject: [PATCH] gd32/f1x0: add IWDG (FWDGT) support by sharing stm32 common
+ driver
+
+Empirically validated via regtrace v0.2: GD32F1x0 IWDG (vendor name FWDGT)
+is register-compatible with the STM32F0 IWDG including the WINR window
+register and EWCR early-wakeup register. Same KR magic constants
+(0x5555/0xAAAA/0xCCCC), same PR/RLR/SR/WINR/EWCR layout.
+
+The GD32F1x0 port can therefore reuse stm32/common/iwdg_common_v2.h and
+iwdg_common_all.c with no carve-out. Just a one-line forwarding header in
+gd32/f1x0/, an entry in stm32/iwdg.h's chip dispatcher (mirroring how
+gpio.h, flash.h, and rcc.h already reach into gd32/f1x0/), and the object
+listed in lib/gd32/f1x0/Makefile.
+
+Verified with `make TARGETS=gd32/f1x0 lib` building cleanly. Trace
+equivalence evidence at:
+  https://github.com/<...>/regtrace/blob/main/decisions/v0.2/IWDG.md
+---
+ include/libopencm3/gd32/f1x0/iwdg.h | 38 +++++++++++++++++++++++++++++
+ include/libopencm3/stm32/iwdg.h     |  2 ++
+ lib/gd32/f1x0/Makefile              |  1 +
+ 3 files changed, 41 insertions(+)
+ create mode 100644 include/libopencm3/gd32/f1x0/iwdg.h
+
+diff --git a/include/libopencm3/gd32/f1x0/iwdg.h b/include/libopencm3/gd32/f1x0/iwdg.h
+new file mode 100644
+index 00000000..e4d81c6c
+--- /dev/null
++++ b/include/libopencm3/gd32/f1x0/iwdg.h
+@@ -0,0 +1,38 @@
++/** @defgroup iwdg_defines IWDG Defines
++ *
++ * @brief <b>Defined Constants and Types for the GD32F1x0 Independent Watchdog
++ * Timer</b>
++ *
++ * @ingroup GD32F1x0_defines
++ *
++ * @version 1.0.0
++ *
++ * LGPL License Terms @ref lgpl_license
++ */
++/*
++ * This file is part of the libopencm3 project.
++ *
++ * This library is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Lesser General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBOPENCM3_IWDG_H
++#define LIBOPENCM3_IWDG_H
++
++/* GD32F1x0 IWDG (vendor name FWDGT) is register-compatible with the STM32F0
++ * IWDG including the window-mode register (WINR). Verified empirically by
++ * regtrace v0.2 (see decisions/v0.2/IWDG.md in the regtrace repo).
++ */
++#include <libopencm3/stm32/common/iwdg_common_v2.h>
++
++#endif
+diff --git a/include/libopencm3/stm32/iwdg.h b/include/libopencm3/stm32/iwdg.h
+index d91c7cb5..c935e8c8 100644
+--- a/include/libopencm3/stm32/iwdg.h
++++ b/include/libopencm3/stm32/iwdg.h
+@@ -22,6 +22,8 @@
+ 
+ #if defined(STM32F0)
+ #       include <libopencm3/stm32/f0/iwdg.h>
++#elif defined(GD32F1X0)
++#       include <libopencm3/gd32/f1x0/iwdg.h>
+ #elif defined(STM32F1)
+ #       include <libopencm3/stm32/f1/iwdg.h>
+ #elif defined(STM32F2)
+diff --git a/lib/gd32/f1x0/Makefile b/lib/gd32/f1x0/Makefile
+index fb5cd4d6..80fb802c 100755
+--- a/lib/gd32/f1x0/Makefile
++++ b/lib/gd32/f1x0/Makefile
+@@ -35,6 +35,7 @@ ARFLAGS		= rcs
+ 
+ OBJS += flash.o flash_common_all.o flash_common_f.o flash_common_f01.o
+ OBJS += gpio_common_all.o gpio_common_f0234.o
++OBJS += iwdg_common_all.o
+ OBJS += rcc.o rcc_common_all.o
+ 
+ VPATH += ../:../../cm3:../common:../../stm32/common
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,39 @@
+name: m2m_8bit
+description: |
+  Memory-to-memory DMA transfer, 8-bit width, low priority. Variant of
+  p2m_circular_16bit exercising mem2mem mode (no peripheral involved),
+  byte-width transfers, and priority=low. The hoverboard project doesn't
+  use this idiom but it's a documented vendor SPL pattern (memcpy-style).
+
+mode: register_writes
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_dma.h]
+    body: |
+      dma_parameter_struct ds;
+      ds.direction       = DMA_PERIPHERAL_TO_MEMORY;
+      ds.memory_addr     = 0x20000200;
+      ds.memory_inc      = DMA_MEMORY_INCREASE_ENABLE;
+      ds.memory_width    = DMA_MEMORY_WIDTH_8BIT;
+      ds.number          = 16;
+      ds.periph_addr     = 0x20000100;
+      ds.periph_inc      = DMA_PERIPH_INCREASE_ENABLE;
+      ds.periph_width    = DMA_PERIPHERAL_WIDTH_8BIT;
+      ds.priority        = DMA_PRIORITY_LOW;
+      dma_init(DMA_CH1, &ds);
+      dma_memory_to_memory_enable(DMA_CH1);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      dma_set_peripheral_address(DMA1, DMA_CHANNEL2, 0x20000100);
+      dma_set_memory_address(DMA1, DMA_CHANNEL2, 0x20000200);
+      dma_set_number_of_data(DMA1, DMA_CHANNEL2, 16);
+      dma_set_read_from_peripheral(DMA1, DMA_CHANNEL2);
+      dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL2);
+      dma_enable_peripheral_increment_mode(DMA1, DMA_CHANNEL2);
+      dma_set_memory_size(DMA1, DMA_CHANNEL2, DMA_CCR_MSIZE_8BIT);
+      dma_set_peripheral_size(DMA1, DMA_CHANNEL2, DMA_CCR_PSIZE_8BIT);
+      dma_set_priority(DMA1, DMA_CHANNEL2, DMA_CCR_PL_LOW);
+      dma_enable_mem2mem_mode(DMA1, DMA_CHANNEL2);

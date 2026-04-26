@@ -1,0 +1,50 @@
+name: p2m_circular_16bit
+description: |
+  Configure DMA channel 0 (gd-spl) / channel 1 (libopencm3 — same physical
+  channel, different numbering convention) for peripheral-to-memory
+  circulation, 16-bit memory and peripheral widths, very-high priority,
+  source = ADC DR, dest = a static buffer in SRAM.
+
+  Mined from the hoverboard ADC DMA setup (setup.c L495-L518). This is the
+  config that backs the DMA-driven ADC streaming for the hoverboard's
+  battery-voltage + motor-current sensing.
+
+  Note: the dummy buffer addresses are static (RAM at 0x20000100); the
+  comparator filters them out via assert_only since the addresses are
+  identical between impls (same constants in YAML body) but RAM-resident
+  buffer state is out of scope per regtrace's design.
+
+mode: register_writes
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_dma.h]
+    body: |
+      dma_parameter_struct ds;
+      ds.direction       = DMA_PERIPHERAL_TO_MEMORY;
+      ds.memory_addr     = 0x20000100;
+      ds.memory_inc      = DMA_MEMORY_INCREASE_ENABLE;
+      ds.memory_width    = DMA_MEMORY_WIDTH_16BIT;
+      ds.number          = 2;
+      ds.periph_addr     = 0x4001244C;
+      ds.periph_inc      = DMA_PERIPH_INCREASE_DISABLE;
+      ds.periph_width    = DMA_PERIPHERAL_WIDTH_16BIT;
+      ds.priority        = DMA_PRIORITY_ULTRA_HIGH;
+      dma_init(DMA_CH0, &ds);
+      dma_circulation_enable(DMA_CH0);
+      dma_memory_to_memory_disable(DMA_CH0);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      dma_set_peripheral_address(DMA1, DMA_CHANNEL1, 0x4001244C);
+      dma_set_memory_address(DMA1, DMA_CHANNEL1, 0x20000100);
+      dma_set_number_of_data(DMA1, DMA_CHANNEL1, 2);
+      dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+      dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_disable_peripheral_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+      dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+      dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_VERY_HIGH);
+      dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+      // libopencm3 has no dma_disable_mem2mem_mode — mem2mem defaults disabled.

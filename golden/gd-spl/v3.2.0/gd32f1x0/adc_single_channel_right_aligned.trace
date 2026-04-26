@@ -1,0 +1,23 @@
+# regtrace v0.1.0 — captured 2026-04-26T18:32:28Z
+# vector:         adc_single_channel_right_aligned
+# library:        gd-spl
+# library_commit: v3.2.0
+# target:         gd32f1x0
+# compiler:       arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+# compile_flags:  -Os -mcpu=cortex-m3 -mthumb -fno-common -ffreestanding -fno-builtin -Wall
+# emulator:       unicorn 2.1.4 (UC_ARCH_ARM, UC_MODE_THUMB)
+# emulation:      clean-exit (LR sentinel hit at instr 66)
+# mode:           register_writes
+R4 <ADC1_BASE>+0x2C 0x00000000
+W4 <ADC1_BASE>+0x2C 0x00000000
+R4 <ADC1_BASE>+0x2C 0x00000000
+W4 <ADC1_BASE>+0x2C 0x00000000
+R4 <ADC1_BASE>+0x34 0x00000000
+W4 <ADC1_BASE>+0x34 0x00000004
+R4 <ADC1_BASE>+0x10 0x00000000
+W4 <ADC1_BASE>+0x10 0x00002000
+R4 <ADC1_BASE>+0x08 0x00000000
+W4 <ADC1_BASE>+0x08 0x00000000
+R4 <ADC1_BASE>+0x08 0x00000000
+R4 <ADC1_BASE>+0x08 0x00000000
+W4 <ADC1_BASE>+0x08 0x00000001

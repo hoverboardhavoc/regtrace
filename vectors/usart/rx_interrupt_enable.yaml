@@ -1,0 +1,17 @@
+name: rx_interrupt_enable
+description: |
+  Enable USART receive-data-available interrupt (RXNE / RBNE bit in CR1).
+  One-call vector to isolate the IRQ-enable register write.
+
+mode: final_state
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_usart.h]
+    body: |
+      usart_interrupt_enable(USART0, USART_INT_RBNE);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/usart.h]
+    body: |
+      usart_enable_rx_interrupt(USART1);

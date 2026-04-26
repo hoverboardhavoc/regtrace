@@ -1,0 +1,26 @@
+name: init_100khz_7bit
+description: |
+  Configure I2C1 for 100 kHz standard mode, 7-bit addressing, and enable.
+  Mined from the hoverboard IMU (BMI160 / MPU6050) bring-up patterns.
+
+  This vector surfaces another major v1-vs-v2 split: GD32F1x0 I2C is the
+  STM32F1-style v1 (CKCFG/RT/CTL0/CTL1 register layout) while libopencm3's
+  stm32f0 I2C is v2 (TIMINGR/CR1/CR2 layout). Different registers entirely;
+  expected outcome is divergence in any mode and a **split** decision.
+
+mode: register_writes
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_i2c.h]
+    body: |
+      i2c_clock_config(I2C0, 100000, I2C_DTCY_2);
+      i2c_mode_addr_config(I2C0, I2C_I2CMODE_ENABLE, I2C_ADDFORMAT_7BITS, 0x00);
+      i2c_enable(I2C0);
+
+  libopencm3/stm32f0:
+    includes: [libopencm3/stm32/i2c.h]
+    body: |
+      i2c_set_speed(I2C1, i2c_speed_sm_100k, 8);
+      i2c_set_own_7bit_slave_address(I2C1, 0x00);
+      i2c_peripheral_enable(I2C1);

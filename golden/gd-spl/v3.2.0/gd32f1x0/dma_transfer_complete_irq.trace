@@ -1,0 +1,12 @@
+# regtrace v0.1.0 — captured 2026-04-26T18:32:29Z
+# vector:         dma_transfer_complete_irq
+# library:        gd-spl
+# library_commit: v3.2.0
+# target:         gd32f1x0
+# compiler:       arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+# compile_flags:  -Os -mcpu=cortex-m3 -mthumb -fno-common -ffreestanding -fno-builtin -Wall
+# emulator:       unicorn 2.1.4 (UC_ARCH_ARM, UC_MODE_THUMB)
+# emulation:      clean-exit (LR sentinel hit at instr 10)
+# mode:           final_state
+R4 <DMA_BASE>+0x08 0x00000000
+W4 <DMA_BASE>+0x08 0x00000002
