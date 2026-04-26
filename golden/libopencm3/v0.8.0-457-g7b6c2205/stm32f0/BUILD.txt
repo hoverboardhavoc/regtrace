@@ -1,5 +1,5 @@
 library:       libopencm3
 rev:           v0.8.0-457-g7b6c2205
 target:        stm32f0
-compiler:      arm-none-eabi-gcc (xPack GNU Arm Embedded GCC arm64) 15.2.1 20251203
+compiler:      arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
 compile_flags: -Os -mcpu=cortex-m0 -mthumb -fno-common -ffreestanding -fno-builtin -Wall
