@@ -7,19 +7,29 @@ clarify.
 
 Currently implemented:
   - libopencm3 (calls its own Makefile, harvests the per-target .a)
+  - gd-spl    (compiles the GD32Firmware SPL .c files into a .a)
 
 Planned (v0.2+):
-  - gd-spl (small per-family Makefile in regtrace driving the vendored sources)
   - cube-ll
 """
 
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 from .. import bootstrap as bootstrap_mod
 from .cache import CacheKey, gcc_version, lookup, store
+
+
+# Library-id → bootstrap.toml repo name. Same string when they match (libopencm3),
+# different when one repo hosts multiple library-ids (GD32Firmware → gd-spl + gd-spl-patched).
+LIBRARY_TO_REPO = {
+    "libopencm3":     "libopencm3",
+    "gd-spl":         "GD32Firmware",
+    "gd-spl-patched": "GD32Firmware",
+}
 
 
 # Map regtrace target id → libopencm3 target name + path-component for its built .a.
@@ -33,31 +43,53 @@ LIBOPENCM3_TARGET_MAP = {
 }
 
 
+# Per-(library, target) source-tree layout for the vendor SPL. The SPL doesn't
+# ship a Makefile; we compile every gd32f1x0_*.c into a .a.
+GD_SPL_LAYOUT = {
+    "gd32f1x0": {
+        "src_dir":     "GD32F1x0/GD32F1x0_standard_peripheral/Source",
+        "include_dirs": [
+            "GD32F1x0/GD32F1x0_standard_peripheral/Include",
+            "GD32F1x0/CMSIS/GD/GD32F1x0/Include",
+            "GD32F1x0/CMSIS",
+        ],
+        # GD ships core_cm3.h but expects CMSIS-Core 4.x to provide
+        # core_cmInstr.h / core_cmFunc.h alongside. We vendor minimal stubs.
+        "build_assets_includes": ["cmsis-stubs"],
+        "chip_define": "GD32F130_150",
+    },
+}
+
+
+def _resolve_repo(library: str):
+    repo_name = LIBRARY_TO_REPO.get(library)
+    if repo_name is None:
+        raise RuntimeError(f"library {library!r} has no LIBRARY_TO_REPO mapping")
+    repos = bootstrap_mod.load()
+    if repo_name not in repos:
+        raise RuntimeError(f"bootstrap.toml has no [repos.{repo_name}] entry")
+    spec = repos[repo_name]
+    if not spec.path.exists():
+        raise RuntimeError(
+            f"{repo_name} not present at {spec.path}. "
+            f"Run `regtrace selftest --bootstrap` to clone."
+        )
+    return spec
+
+
 def build_libopencm3(target: str, rev: str, compile_flags: tuple[str, ...]) -> Path:
     """Build (or fetch from cache) libopencm3 for `target`. Returns path to lib*.a."""
     if target not in LIBOPENCM3_TARGET_MAP:
         raise ValueError(f"libopencm3 target {target!r} not in LIBOPENCM3_TARGET_MAP")
     key = CacheKey(
-        library="libopencm3",
-        rev=rev,
-        target=target,
-        gcc_version=gcc_version(),
-        compile_flags=compile_flags,
+        library="libopencm3", rev=rev, target=target,
+        gcc_version=gcc_version(), compile_flags=compile_flags,
     )
     cached = lookup(key)
     if cached is not None:
         return cached
 
-    repos = bootstrap_mod.load()
-    if "libopencm3" not in repos:
-        raise RuntimeError("bootstrap.toml has no [repos.libopencm3] entry")
-    repo = repos["libopencm3"]
-    if not repo.path.exists():
-        raise RuntimeError(
-            f"libopencm3 not present at {repo.path}. "
-            f"Run `regtrace selftest --bootstrap` to clone."
-        )
-
+    repo = _resolve_repo("libopencm3")
     lopencm3_target, libstem = LIBOPENCM3_TARGET_MAP[target]
     print(f"[build] libopencm3 {target} ({lopencm3_target}) at {repo.path} (rev {rev})")
     subprocess.check_call(
@@ -70,12 +102,92 @@ def build_libopencm3(target: str, rev: str, compile_flags: tuple[str, ...]) -> P
     return store(key, artifact)
 
 
+def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
+                 patched: bool = False) -> Path:
+    """Build (or fetch from cache) the GD32 vendor SPL for `target`.
+
+    Compiles every gd32<family>_*.c in the SPL Source/ directory into a single
+    static archive. The SPL has no Makefile of its own; this is the recipe.
+    """
+    layout = GD_SPL_LAYOUT.get(target)
+    if layout is None:
+        raise ValueError(f"gd-spl target {target!r} not in GD_SPL_LAYOUT")
+    library = "gd-spl-patched" if patched else "gd-spl"
+
+    key = CacheKey(
+        library=library, rev=rev, target=target,
+        gcc_version=gcc_version(), compile_flags=compile_flags,
+    )
+    cached = lookup(key)
+    if cached is not None:
+        return cached
+
+    repo = _resolve_repo(library)
+    src_dir = repo.path / layout["src_dir"]
+    if not src_dir.is_dir():
+        raise RuntimeError(f"SPL source directory not found: {src_dir}")
+    from ..paths import build_assets_dir
+    assets_root = build_assets_dir(library, target)
+    include_dirs = [str(assets_root / d) for d in layout.get("build_assets_includes", [])]
+    include_dirs += [str(repo.path / d) for d in layout["include_dirs"]]
+    chip_define = layout["chip_define"]
+
+    sources = sorted(src_dir.glob(f"{target}_*.c"))
+    if not sources:
+        raise RuntimeError(f"no SPL .c sources matched {src_dir}/{target}_*.c")
+
+    objs: list[Path] = []
+    failed: list[tuple[Path, str]] = []
+    print(f"[build] gd-spl {target} ({len(sources)} source files) at {repo.path} (rev {rev})")
+    with tempfile.TemporaryDirectory(prefix="regtrace-gd-spl-") as tmpdir:
+        tmp = Path(tmpdir)
+        for src in sources:
+            obj = tmp / f"{src.stem}.o"
+            cmd = [
+                "arm-none-eabi-gcc",
+                *compile_flags,
+                f"-D{chip_define}",
+                "-DUSE_STDPERIPH_DRIVER",
+                *(f"-I{d}" for d in include_dirs),
+                "-c", str(src),
+                "-o", str(obj),
+            ]
+            try:
+                subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+                objs.append(obj)
+            except subprocess.CalledProcessError as e:
+                failed.append((src, e.output.decode("utf-8", "replace")))
+
+        if not objs:
+            details = "\n".join(f"  {s.name}: {err.splitlines()[0] if err else 'no output'}"
+                                for s, err in failed[:5])
+            raise RuntimeError(f"gd-spl build failed for all sources:\n{details}")
+        if failed:
+            print(f"[build] {len(failed)}/{len(sources)} SPL sources failed to compile "
+                  f"(typically depend on USB or features outside our scope); excluded from archive")
+
+        archive = tmp / f"lib{library.replace('-', '_')}.a"
+        ar_cmd = ["arm-none-eabi-ar", "rcs", str(archive)] + [str(o) for o in objs]
+        subprocess.check_call(ar_cmd)
+        return store(key, archive)
+
+
 def build_hal(library: str, target: str, rev: str, compile_flags: tuple[str, ...]) -> Path:
     """Dispatch to the per-library builder."""
     if library == "libopencm3":
         return build_libopencm3(target, rev, compile_flags)
-    if library in {"gd-spl", "gd-spl-patched"}:
-        raise NotImplementedError(
-            f"{library} HAL build is planned for v0.2; only libopencm3 supported at v0.1"
-        )
+    if library == "gd-spl":
+        return build_gd_spl(target, rev, compile_flags, patched=False)
+    if library == "gd-spl-patched":
+        return build_gd_spl(target, rev, compile_flags, patched=True)
     raise NotImplementedError(f"library {library!r} has no builder")
+
+
+def auto_detect_repo_rev(library: str) -> str:
+    """Resolve the rev for `library` via git describe on its underlying repo."""
+    repo = _resolve_repo(library)
+    out = subprocess.check_output(
+        ["git", "-C", str(repo.path), "describe", "--tags", "--always", "--dirty"],
+        text=True,
+    ).strip()
+    return out

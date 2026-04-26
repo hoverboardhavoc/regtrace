@@ -35,6 +35,19 @@ TARGET_FLAGS: dict[str, tuple[str, ...]] = {
 }
 
 
+# When a HAL needs warnings demoted (vendor SPL has many) or a specific
+# C dialect (vendor SPL typedefs `bool` and won't compile under C23+ where
+# `bool` is a keyword), apply per-library overrides.
+LIBRARY_EXTRA_FLAGS: dict[str, tuple[str, ...]] = {
+    "gd-spl":         ("-std=gnu11",
+                       "-Wno-unused-but-set-variable", "-Wno-unused-variable",
+                       "-Wno-comment", "-Wno-implicit-function-declaration"),
+    "gd-spl-patched": ("-std=gnu11",
+                       "-Wno-unused-but-set-variable", "-Wno-unused-variable",
+                       "-Wno-comment", "-Wno-implicit-function-declaration"),
+}
+
+
 @dataclass(frozen=True)
 class BuildResult:
     elf_path: Path
@@ -62,19 +75,8 @@ void regtrace_test(void)
 
 
 def auto_detect_rev(library: str) -> str:
-    """Resolve `<library>`'s rev via `git describe --tags --always --dirty`."""
-    from .. import bootstrap as bootstrap_mod
-    repos = bootstrap_mod.load()
-    if library not in repos:
-        raise RuntimeError(f"bootstrap.toml has no [repos.{library}] entry")
-    repo = repos[library]
-    if not repo.path.exists():
-        raise RuntimeError(f"{library} not present at {repo.path}")
-    out = subprocess.check_output(
-        ["git", "-C", str(repo.path), "describe", "--tags", "--always", "--dirty"],
-        text=True,
-    ).strip()
-    return out
+    """Resolve `<library>`'s rev via git describe on its underlying repo."""
+    return hal.auto_detect_repo_rev(library)
 
 
 def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> BuildResult:
@@ -92,7 +94,8 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
             f"missing build_assets/{library}/{target}/ — vendor startup.S + link.ld there"
         )
 
-    lib_a = hal.build_hal(library, target, actual_rev, flags)
+    library_flags = flags + LIBRARY_EXTRA_FLAGS.get(library, ())
+    lib_a = hal.build_hal(library, target, actual_rev, library_flags)
     out_dir = build_dir(library, actual_rev, target)
     out_dir.mkdir(parents=True, exist_ok=True)
     elf_path = out_dir / f"{vec.vector_id}.elf"
@@ -109,25 +112,32 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
                 f"build_assets/{library}/{target}/ must contain startup.S + link.ld"
             )
 
-        # Library include paths — libopencm3 ships headers under include/.
-        from .. import bootstrap as bootstrap_mod
-        repos = bootstrap_mod.load()
+        # Library include paths + chip define.
         include_dirs: list[str] = []
+        extra_defines: list[str] = []
         if library == "libopencm3":
-            include_dirs.append(str(repos["libopencm3"].path / "include"))
+            repo = hal._resolve_repo("libopencm3")
+            include_dirs.append(str(repo.path / "include"))
             target_define = {
                 "stm32f0": "STM32F0",
                 "stm32f1": "STM32F1",
                 "stm32f4": "STM32F4",
                 "gd32f1x0": "GD32F1X0",
             }[target]
-            extra_defines = [f"-D{target_define}"]
-        else:
-            extra_defines = []
+            extra_defines.append(f"-D{target_define}")
+        elif library in {"gd-spl", "gd-spl-patched"}:
+            repo = hal._resolve_repo(library)
+            layout = hal.GD_SPL_LAYOUT[target]
+            for d in layout.get("build_assets_includes", []):
+                include_dirs.append(str(assets_dir / d))
+            for d in layout["include_dirs"]:
+                include_dirs.append(str(repo.path / d))
+            extra_defines.append(f"-D{layout['chip_define']}")
+            extra_defines.append("-DUSE_STDPERIPH_DRIVER")
 
         cmd = [
             "arm-none-eabi-gcc",
-            *flags,
+            *library_flags,
             *extra_defines,
             *(f"-I{d}" for d in include_dirs),
             "-nostartfiles",

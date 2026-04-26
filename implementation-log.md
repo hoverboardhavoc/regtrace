@@ -110,9 +110,31 @@ Unicorn requires every accessed page to be mapped or it raises `UC_ERR_READ_UNMA
 ### `assert_only` / `ignore` not yet wired into the comparator
 The schema validates and parses but the comparator doesn't apply the filter. Land in v0.2 alongside the `with_polling` mode work.
 
-### v0.1 gates — current status
-After scaffolding and component tests:
-- Gate 1 (`regtrace selftest`): passes everything except arm-none-eabi-gcc and the (uncloned) sibling repos. Once the toolchain is installed and `selftest --bootstrap` is run, this gate should pass.
-- Gates 2-5: blocked on arm-none-eabi-gcc.
-- Gate 6: blocked on Gates 2-5.
-- All Python-side components have unit-test coverage (16 tests, all passing).
+### Toolchain installed via xPack tarball (no sudo)
+The `brew install --cask gcc-arm-embedded` cask requires sudo. As a no-sudo alternative I downloaded the official xPack ARM toolchain v15.2.1-1.1 from `github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/`, extracted it under `~/opt/`, and symlinked the binaries into `~/.local/bin/`. xPack is the same toolchain ARM ships, just packaged as a self-contained tarball — same gcc version, same behaviour. `arm-none-eabi-gcc --version` reports "xPack GNU Arm Embedded GCC arm64 15.2.1 20251203".
+
+### gd-spl HAL builder — actually implemented in v0.1
+I'd initially scoped gd-spl as v0.2, but the spec's v0.1 explicitly covers `gd-spl/v3.0.0/gd32f1x0/`. So gd-spl is fully wired in v0.1:
+- `LIBRARY_TO_REPO` maps `gd-spl` → the `GD32Firmware` repo entry in bootstrap.toml
+- `build_gd_spl()` in `hal.py` compiles every `gd32<family>_*.c` into a static archive; sources that fail to compile (USB stack and similar that depend on features outside v0.1 scope) are excluded
+- `build_assets/gd-spl/gd32f1x0/cmsis-stubs/` contains:
+  - `core_cmInstr.h`, `core_cmFunc.h` — minimal CMSIS-Core 4.x compatibility shims (GD ships only `core_cm3.h` and expects the user to provide the split-out instruction/function headers)
+  - `gd32f1x0_libopt.h` — minimal version including all SPL peripheral headers
+- Pinned GD-SPL `-std=gnu11` because gcc 15 defaults to C23 where `bool` is a keyword, conflicting with the SPL's `typedef enum { … } bool`
+- Used `v3.2.0` as the rev label (matches the SPL header `\version` markers); the GD32Firmware repo is a pristine vendor mirror with no tags
+
+### Bit-banding handled but not exercised yet
+The extractor handles Cortex-M3 bit-band aliases (translating writes to `0x42xxxxxx` aliases into RMW writes to the underlying word at `0x40xxxxxx`). The first vector doesn't exercise this path — both libopencm3 timer_set_mode and SPL timer_init use direct word stores. A future vector (e.g., GPIO bit-set/clear via PSOR/PCOR alias) would exercise it.
+
+### v0.1 gates — all six pass
+- **Gate 1** `regtrace selftest --bootstrap`: PASS. Cloned all three sibling repos (libopencm3, GD32Firmware, Hoverboard firmware); validates toolchain and python deps.
+- **Gate 2** `regtrace build vectors/timer/pwm_init_center_aligned_16khz.yaml`: PASS. Both `gd-spl/gd32f1x0` (16 KB ELF) and `libopencm3/stm32f0` (81 KB ELF) compile.
+- **Gate 3** `regtrace trace <elf>`: PASS for both. gd-spl trace contains 17 events (10 W + 7 R, lots of redundant CR1 RMW); libopencm3 trace contains 7 events (5 W + 2 R, direct stores).
+- **Gate 4** `regtrace compare timer_pwm_init_center_aligned_16khz`: PASS — produces structured diff. The traces are divergent in `register_writes` mode (different order and count of writes), but all final-state register values match.
+- **Gate 5** `ls golden/<library>/<rev>/<target>/`: PASS. Both impl pairs captured (.elf + .trace + BUILD.txt) under `golden/gd-spl/v3.2.0/gd32f1x0/` and `golden/libopencm3/v0.8.0-457-g7b6c2205/stm32f0/`.
+- **Gate 6** `ls decisions/v0.1/`: PASS. `TIMER.md` (decision: share, confidence: partial) and `ADC.md` (deferred to v0.2) present, plus `decisions/TEMPLATE.md`.
+
+All 16 pytest tests pass. The extractor unit test uses a hand-rolled in-memory ELF (no toolchain needed) so the test suite stays fast and self-contained.
+
+### TIMER decision — empirical finding worth noting
+The first comparison reveals a real implementation pattern difference: gd-spl's `timer_init` reads CR1 four times and re-writes it to the same value 0x60 between each peripheral write (defensive RMW idiom from the vendor SPL). libopencm3 just stores 0x60 once. Both produce identical *final* register state. In `register_writes` mode this is divergent; in `final_state` mode it'd match. The TIMER decision recommends **share** based on the final-state equivalence.

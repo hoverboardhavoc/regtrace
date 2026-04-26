@@ -1,0 +1,98 @@
+# targets/gd32f1x0.toml — GD32F1x0 family (Cortex-M3 — F130/F150/F170/F190).
+#
+# Peripheral memory layout sourced from GD32F1x0 User Manual Rev 3.6.
+# Symbol names are STM32-style (TIM1_BASE, RCC_BASE, etc.) so that gd-spl
+# traces compare against libopencm3/stm32f0 traces. The vendor SPL calls
+# them TIMER0/RCU/etc. — that vocabulary is irrelevant to the trace
+# (addresses are what matter).
+#
+# Note: GD32F1x0 RCU sits at 0x40021000 (same as STM32 RCC). For trace
+# comparison purposes we use RCC_BASE.
+
+arch         = "cortex-m3"
+unicorn_arch = "arm"
+unicorn_mode = "thumb"
+
+[[peripheral_ranges]]
+start = 0x40000000
+end   = 0x5FFFFFFF
+
+[[peripheral_ranges]]
+start = 0xE0000000
+end   = 0xE00FFFFF
+
+[peripheral_bases]
+TIM2_BASE   = 0x40000000
+TIM3_BASE   = 0x40000400
+TIM6_BASE   = 0x40001000
+TIM14_BASE  = 0x40002000
+RTC_BASE    = 0x40002800
+WWDG_BASE   = 0x40002C00
+IWDG_BASE   = 0x40003000
+SPI1_BASE   = 0x40003800   # SPI1 in GD = SPI2 (numbering matches STM32)
+USART1_BASE = 0x40004400
+I2C0_BASE   = 0x40005400   # I2C0 in GD = I2C1 in STM
+PWR_BASE    = 0x40007000
+SYSCFG_BASE = 0x40010000
+EXTI_BASE   = 0x40010400
+ADC0_BASE   = 0x40012400
+TIM1_BASE   = 0x40012C00   # GD calls this TIMER0
+SPI0_BASE   = 0x40013000
+USART0_BASE = 0x40013800
+TIM15_BASE  = 0x40014000
+TIM16_BASE  = 0x40014400
+TIM17_BASE  = 0x40014800
+DBGMCU_BASE = 0x40015800
+DMA_BASE    = 0x40020000
+RCC_BASE    = 0x40021000   # GD calls this RCU
+FMC_BASE    = 0x40022000
+CRC_BASE    = 0x40023000
+GPIOA_BASE  = 0x48000000
+GPIOB_BASE  = 0x48000400
+GPIOC_BASE  = 0x48000800
+GPIOD_BASE  = 0x48000C00
+GPIOF_BASE  = 0x48001400
+NVIC_BASE   = 0xE000E100
+SCB_BASE    = 0xE000ED00
+SYSTICK_BASE = 0xE000E010
+
+[register_names.TIM1_BASE]
+"0x00" = "CR1"
+"0x04" = "CR2"
+"0x08" = "SMCR"
+"0x0C" = "DIER"
+"0x10" = "SR"
+"0x14" = "EGR"
+"0x18" = "CCMR1"
+"0x1C" = "CCMR2"
+"0x20" = "CCER"
+"0x24" = "CNT"
+"0x28" = "PSC"
+"0x2C" = "ARR"
+"0x30" = "RCR"
+"0x34" = "CCR1"
+"0x38" = "CCR2"
+"0x3C" = "CCR3"
+"0x40" = "CCR4"
+"0x44" = "BDTR"
+"0x48" = "DCR"
+"0x4C" = "DMAR"
+
+[register_names.RCC_BASE]
+"0x00" = "CR"
+"0x04" = "CFGR"
+"0x08" = "CIR"
+"0x0C" = "APB2RSTR"
+"0x10" = "APB1RSTR"
+"0x14" = "AHBENR"
+"0x18" = "APB2ENR"
+"0x1C" = "APB1ENR"
+
+[reset_values.RCC_BASE]
+"0x00" = "0x00000083"
+"0x14" = "0x00000014"
+
+# GD32F1x0 is Cortex-M3 — bit-banding aliases exist.
+# Alias regions: 0x22000000-0x23FFFFFF (peripheral 0x40000000-0x400FFFFF)
+[bit_band_aliases]
+0x42000000 = 0x40000000
