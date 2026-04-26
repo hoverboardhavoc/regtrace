@@ -20,3 +20,10 @@ path   = "${REGTRACE_WORKSPACE}/GD32Firmware"
 url    = "https://github.com/RoboDurden/Hoverboard-Firmware-Hack-Gen2.x-GD32"
 commit = "main"
 path   = "${REGTRACE_WORKSPACE}/Hoverboard-Firmware-Hack-Gen2.x-GD32"
+
+# v0.4+: Cube LL oracle for STM32 sanity checks. Large repo (~600 MB);
+# only fetched when a Cube LL vector implementation is in scope.
+[repos.STM32CubeF1]
+url    = "https://github.com/STMicroelectronics/STM32CubeF1"
+commit = "main"
+path   = "${REGTRACE_WORKSPACE}/STM32CubeF1"

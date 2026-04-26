@@ -48,6 +48,10 @@ LIBRARY_EXTRA_FLAGS: dict[str, tuple[str, ...]] = {
     "gd-spl-patched": ("-std=gnu11",
                        "-Wno-unused-but-set-variable", "-Wno-unused-variable",
                        "-Wno-comment", "-Wno-implicit-function-declaration"),
+    # Cube LL: same C23-vs-bool issue, plus its headers warn liberally.
+    "cube-ll":        ("-std=gnu11",
+                       "-Wno-unused-but-set-variable", "-Wno-unused-variable",
+                       "-Wno-comment", "-Wno-pointer-sign"),
 }
 
 
@@ -138,6 +142,13 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
                 include_dirs.append(str(tree / d))
             extra_defines.append(f"-D{layout['chip_define']}")
             extra_defines.append("-DUSE_STDPERIPH_DRIVER")
+        elif library == "cube-ll":
+            tree = hal.worktree_for("cube-ll", actual_rev)
+            layout = hal.CUBE_LL_LAYOUT[target]
+            for d in layout["include_dirs"]:
+                include_dirs.append(str(tree / d))
+            extra_defines.append(f"-D{layout['chip_define']}")
+            extra_defines.append("-DUSE_FULL_LL_DRIVER")
 
         cmd = [
             "arm-none-eabi-gcc",

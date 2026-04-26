@@ -42,3 +42,11 @@ implementations:
     body: |
       iwdg_set_period_ms(2048);
       iwdg_start();
+
+  cube-ll/stm32f1:
+    includes: [stm32f1xx_ll_iwdg.h]
+    body: |
+      LL_IWDG_EnableWriteAccess(IWDG);
+      LL_IWDG_SetPrescaler(IWDG, LL_IWDG_PRESCALER_16);
+      LL_IWDG_SetReloadCounter(IWDG, 0x0FFF);
+      LL_IWDG_Enable(IWDG);
