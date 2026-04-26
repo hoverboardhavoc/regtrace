@@ -25,6 +25,12 @@ regtrace = "regtrace.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/regtrace"]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: tests that build libopencm3/SPL and may take minutes on a cold cache",
+]
+addopts = "-m 'not slow'"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "src/regtrace",

@@ -1,0 +1,18 @@
+# regtrace v0.1.0 — captured 2026-04-26T18:52:28Z
+# vector:         iwdg_config_2sec_period
+# library:        libopencm3
+# library_commit: master
+# target:         stm32f4
+# compiler:       arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+# compile_flags:  -Os -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fno-common -ffreestanding -fno-builtin -Wall
+# emulator:       unicorn 2.1.4 (UC_ARCH_ARM, UC_MODE_THUMB)
+# emulation:      clean-exit (LR sentinel hit at instr 53)
+# mode:           final_state
+W4 <IWDG_BASE>+0x00 0x0000CCCC         # KR
+W4 <IWDG_BASE>+0x00 0x00005555         # KR
+R4 <IWDG_BASE>+0x0C 0x00000000         # SR
+W4 <IWDG_BASE>+0x04 0x00000002         # PR
+R4 <IWDG_BASE>+0x0C 0x00000000         # SR
+W4 <IWDG_BASE>+0x08 0x00000FFF         # RLR
+W4 <IWDG_BASE>+0x00 0x0000AAAA         # KR
+W4 <IWDG_BASE>+0x00 0x0000CCCC         # KR

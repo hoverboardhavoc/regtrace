@@ -77,6 +77,68 @@ def _resolve_repo(library: str):
     return spec
 
 
+def _git_describe(repo_path: Path) -> str:
+    return subprocess.check_output(
+        ["git", "-C", str(repo_path), "describe", "--tags", "--always", "--dirty"],
+        text=True,
+    ).strip()
+
+
+def worktree_for(library: str, rev: str) -> Path:
+    """Return a path containing `library`'s tree checked out at `rev`.
+
+    If `rev` matches `git describe` on the default checkout, returns that
+    path. Otherwise creates (or reuses) a git worktree under
+    ~/.cache/regtrace/worktrees/<library>/<sanitised-rev>/.
+    """
+    spec = _resolve_repo(library)
+    primary_rev = _git_describe(spec.path)
+    if rev == primary_rev:
+        return spec.path
+
+    from ..paths import cache_root
+    safe_rev = rev.replace("/", "_")
+    worktree_path = cache_root() / "worktrees" / library / safe_rev
+    if worktree_path.exists() and (worktree_path / ".git").exists():
+        # Existing worktree — verify it's at the right rev. A "-dirty"
+        # suffix means the user (or a synthetic-regression test) has edits in
+        # the worktree; preserve those by keeping the worktree as long as the
+        # underlying commit still resolves to the requested rev.
+        cur = _git_describe(worktree_path)
+        if cur == rev or cur == f"{rev}-dirty":
+            return worktree_path
+        # Stale; remove and recreate.
+        subprocess.check_call(
+            ["git", "-C", str(spec.path), "worktree", "remove", "--force", str(worktree_path)],
+            stderr=subprocess.DEVNULL,
+        )
+
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.check_call(
+        ["git", "-C", str(spec.path), "worktree", "add", "--force", "--detach",
+         str(worktree_path), rev],
+    )
+    return worktree_path
+
+
+def _python_shim_dir() -> Path:
+    """Return a dir containing a `python` wrapper around `python3`.
+
+    Older libopencm3 revs (≤ v0.8.x) ship scripts with `#!/usr/bin/env python`
+    shebangs, but modern macOS only ships `python3`. We prepend this dir to
+    PATH for libopencm3 makes so builds against historical revs work.
+    """
+    from ..paths import cache_root
+    d = cache_root() / "shim" / "bin"
+    d.mkdir(parents=True, exist_ok=True)
+    shim = d / "python"
+    if not shim.exists():
+        py3 = subprocess.check_output(["which", "python3"], text=True).strip()
+        shim.write_text(f"#!/bin/sh\nexec {py3} \"$@\"\n")
+        shim.chmod(0o755)
+    return d
+
+
 def build_libopencm3(target: str, rev: str, compile_flags: tuple[str, ...]) -> Path:
     """Build (or fetch from cache) libopencm3 for `target`. Returns path to lib*.a."""
     if target not in LIBOPENCM3_TARGET_MAP:
@@ -89,14 +151,17 @@ def build_libopencm3(target: str, rev: str, compile_flags: tuple[str, ...]) -> P
     if cached is not None:
         return cached
 
-    repo = _resolve_repo("libopencm3")
+    tree = worktree_for("libopencm3", rev)
     lopencm3_target, libstem = LIBOPENCM3_TARGET_MAP[target]
-    print(f"[build] libopencm3 {target} ({lopencm3_target}) at {repo.path} (rev {rev})")
+    print(f"[build] libopencm3 {target} ({lopencm3_target}) at {tree} (rev {rev})")
+    import os as _os
+    env = dict(_os.environ)
+    env["PATH"] = f"{_python_shim_dir()}:{env.get('PATH', '')}"
     subprocess.check_call(
         ["make", f"TARGETS={lopencm3_target}", "lib"],
-        cwd=str(repo.path),
+        cwd=str(tree), env=env,
     )
-    artifact = repo.path / "lib" / f"lib{libstem}.a"
+    artifact = tree / "lib" / f"lib{libstem}.a"
     if not artifact.exists():
         raise RuntimeError(f"libopencm3 build did not produce {artifact}")
     return store(key, artifact)
@@ -122,14 +187,14 @@ def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
     if cached is not None:
         return cached
 
-    repo = _resolve_repo(library)
-    src_dir = repo.path / layout["src_dir"]
+    tree = worktree_for(library, rev)
+    src_dir = tree / layout["src_dir"]
     if not src_dir.is_dir():
         raise RuntimeError(f"SPL source directory not found: {src_dir}")
     from ..paths import build_assets_dir
     assets_root = build_assets_dir(library, target)
     include_dirs = [str(assets_root / d) for d in layout.get("build_assets_includes", [])]
-    include_dirs += [str(repo.path / d) for d in layout["include_dirs"]]
+    include_dirs += [str(tree / d) for d in layout["include_dirs"]]
     chip_define = layout["chip_define"]
 
     sources = sorted(src_dir.glob(f"{target}_*.c"))
@@ -138,7 +203,7 @@ def build_gd_spl(target: str, rev: str, compile_flags: tuple[str, ...],
 
     objs: list[Path] = []
     failed: list[tuple[Path, str]] = []
-    print(f"[build] gd-spl {target} ({len(sources)} source files) at {repo.path} (rev {rev})")
+    print(f"[build] gd-spl {target} ({len(sources)} source files) at {tree} (rev {rev})")
     with tempfile.TemporaryDirectory(prefix="regtrace-gd-spl-") as tmpdir:
         tmp = Path(tmpdir)
         for src in sources:

@@ -28,7 +28,10 @@ TARGET_FLAGS: dict[str, tuple[str, ...]] = {
                 "-fno-builtin", "-Wall"),
     "stm32f1": ("-Os", "-mcpu=cortex-m3", "-mthumb", "-fno-common", "-ffreestanding",
                 "-fno-builtin", "-Wall"),
-    "stm32f4": ("-Os", "-mcpu=cortex-m4", "-mthumb", "-fno-common", "-ffreestanding",
+    # STM32F4 default libopencm3 build uses hard-float ABI; the snippet must
+    # match or ld emits "uses VFP register arguments" mismatch errors.
+    "stm32f4": ("-Os", "-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard",
+                "-mfpu=fpv4-sp-d16", "-fno-common", "-ffreestanding",
                 "-fno-builtin", "-Wall"),
     "gd32f1x0": ("-Os", "-mcpu=cortex-m3", "-mthumb", "-fno-common", "-ffreestanding",
                  "-fno-builtin", "-Wall"),
@@ -112,12 +115,13 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
                 f"build_assets/{library}/{target}/ must contain startup.S + link.ld"
             )
 
-        # Library include paths + chip define.
+        # Library include paths + chip define. Resolve to the worktree path
+        # so multi-rev captures use the right source tree.
         include_dirs: list[str] = []
         extra_defines: list[str] = []
         if library == "libopencm3":
-            repo = hal._resolve_repo("libopencm3")
-            include_dirs.append(str(repo.path / "include"))
+            tree = hal.worktree_for("libopencm3", actual_rev)
+            include_dirs.append(str(tree / "include"))
             target_define = {
                 "stm32f0": "STM32F0",
                 "stm32f1": "STM32F1",
@@ -126,12 +130,12 @@ def build_one(vec: vectors_mod.Vector, slug: str, rev: str | None = None) -> Bui
             }[target]
             extra_defines.append(f"-D{target_define}")
         elif library in {"gd-spl", "gd-spl-patched"}:
-            repo = hal._resolve_repo(library)
+            tree = hal.worktree_for(library, actual_rev)
             layout = hal.GD_SPL_LAYOUT[target]
             for d in layout.get("build_assets_includes", []):
                 include_dirs.append(str(assets_dir / d))
             for d in layout["include_dirs"]:
-                include_dirs.append(str(repo.path / d))
+                include_dirs.append(str(tree / d))
             extra_defines.append(f"-D{layout['chip_define']}")
             extra_defines.append("-DUSE_STDPERIPH_DRIVER")
 

@@ -12,7 +12,9 @@ def test_first_vector_loads(tmp_path):
     assert v.peripheral == "timer"
     assert v.name == "pwm_init_center_aligned_16khz"
     assert v.mode in ("register_writes", "final_state")  # YAML may be either
-    assert set(v.implementations) == {"gd-spl/gd32f1x0", "libopencm3/stm32f0"}
+    # gd-spl/gd32f1x0 + libopencm3/stm32f0 are the v0.1 pair; v0.3 added
+    # libopencm3/stm32f1 and stm32f4 for cross-family regression coverage.
+    assert {"gd-spl/gd32f1x0", "libopencm3/stm32f0"} <= set(v.implementations)
 
 
 def test_canonical_pair_auto_derived_for_two():

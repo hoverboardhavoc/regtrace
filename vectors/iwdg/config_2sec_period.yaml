@@ -16,6 +16,8 @@ description: |
 
 mode: final_state
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/stm32f0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_fwdgt.h]
@@ -24,6 +26,18 @@ implementations:
       fwdgt_enable();
 
   libopencm3/stm32f0:
+    includes: [libopencm3/stm32/iwdg.h]
+    body: |
+      iwdg_set_period_ms(2048);
+      iwdg_start();
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/iwdg.h]
+    body: |
+      iwdg_set_period_ms(2048);
+      iwdg_start();
+
+  libopencm3/stm32f4:
     includes: [libopencm3/stm32/iwdg.h]
     body: |
       iwdg_set_period_ms(2048);

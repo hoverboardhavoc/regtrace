@@ -5,6 +5,8 @@ description: |
 
 mode: final_state
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/stm32f0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_timer.h]
@@ -20,6 +22,24 @@ implementations:
       timer_event_software_generate(TIMER0, TIMER_EVENT_SRC_UPG);
 
   libopencm3/stm32f0:
+    includes: [libopencm3/stm32/timer.h]
+    body: |
+      timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
+      timer_set_period(TIM1, 2250);
+      timer_set_prescaler(TIM1, 0);
+      timer_set_repetition_counter(TIM1, 1);
+      timer_generate_event(TIM1, TIM_EGR_UG);
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/timer.h]
+    body: |
+      timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
+      timer_set_period(TIM1, 2250);
+      timer_set_prescaler(TIM1, 0);
+      timer_set_repetition_counter(TIM1, 1);
+      timer_generate_event(TIM1, TIM_EGR_UG);
+
+  libopencm3/stm32f4:
     includes: [libopencm3/stm32/timer.h]
     body: |
       timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
