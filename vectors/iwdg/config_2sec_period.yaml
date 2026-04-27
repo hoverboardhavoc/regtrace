@@ -31,6 +31,15 @@ implementations:
       iwdg_set_period_ms(2048);
       iwdg_start();
 
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/cm3/common.h, libopencm3/gd32/f1x0/iwdg.h]
+    body: |
+      // GD32F1x0 IWDG is register-compatible with STM32F0 IWDG (vendor name
+      // FWDGT) — the fork's gd32/f1x0/iwdg.h forwards to
+      // stm32/common/iwdg_common_v2.h. Same final state expected.
+      iwdg_set_period_ms(2048);
+      iwdg_start();
+
   libopencm3/stm32f1:
     includes: [libopencm3/stm32/iwdg.h]
     body: |
