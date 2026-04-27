@@ -7,8 +7,13 @@
 # pass). Default workspace root is ~/dev/c/.
 
 [repos.libopencm3]
-url    = "https://github.com/libopencm3/libopencm3"
-commit = "7b6c2205"
+# hoverboardhavoc fork — has the empirical GD32 family support
+# (`gd32/f10x`, `gd32/f1x0`) the Hoverboard firmware port links against.
+# Upstream libopencm3 has no GD32 support; tracing `libopencm3/gd32f1x0`
+# vectors against upstream is meaningless. Bump this commit when the
+# fork moves, paired with a golden recapture.
+url    = "https://github.com/hoverboardhavoc/libopencm3"
+commit = "d5f222f8"
 path   = "${REGTRACE_WORKSPACE}/libopencm3"
 
 [repos.GD32Firmware]

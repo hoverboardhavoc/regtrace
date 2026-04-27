@@ -106,11 +106,10 @@ implementations:
       rcc_clock_setup_in_hsi_out_64mhz();
 
   libopencm3/gd32f1x0:
-    includes: [libopencm3/stm32/rcc.h]
+    includes: [libopencm3/cm3/common.h, libopencm3/gd32/f1x0/rcc.h]
     body: |
-      // The libopencm3/gd32f1x0 stub forwards rcc.h to stm32/f1/rcc.h
-      // (per draft-prs/v0.5/...gd32f10x...patch pattern). It inherits the
-      // 64-MHz cap. A regtrace-validated GD32F1x0 RCC port would need a
-      // dedicated rcc_clock_setup() that writes RCU_CFG0 PLLMF[4] for
-      // multipliers > 16. This vector exists to surface that gap.
-      rcc_clock_setup_in_hsi_out_64mhz();
+      // GD32-specific: writes the wider PLLMF[4] bit at RCU_CFG0[27] via
+      // rcc_set_pll_multiplication_factor (lib/gd32/f1x0/rcc.c). The 72 MHz
+      // entry was added to rcc_hsi_configs[] for the Hoverboard firmware
+      // port — see decisions/v0.5+/RCC.md.
+      rcc_clock_setup_pll(&rcc_hsi_configs[RCC_CLOCK_HSI_72MHZ]);

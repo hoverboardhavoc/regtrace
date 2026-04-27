@@ -60,15 +60,47 @@ regtrace compare rcc_irc8m_pll_72mhz --against=gd-spl/gd32f1x0,libopencm3/stm32f
 
 ## Diff outcome (observed)
 
-**Build leg failed for `libopencm3/gd32f1x0`:** the fork's
-`gd32/f1x0/rcc.h` does not provide `rcc_clock_setup_in_hsi_out_64mhz()`
-(or any 72 MHz helper). The vector references it in the libopencm3
-slot, the linker can't resolve it, the build aborts with
-`implicit declaration of function 'rcc_clock_setup_in_hsi_out_64mhz'`.
-This is empirical evidence that the fork's gd32/f1x0 RCC surface is
-incomplete for this firmware's needs — not a vector defect. A bare
-forwarder to `stm32/f1/rcc.h` would also be wrong (caps at 64 MHz).
-The split is required to land a 72 MHz helper.
+**2026-04-27 update — fork extended; libopencm3/gd32f1x0 leg now builds.**
+Added `RCC_CFGR_PLLMUL_PLL_CLK_MUL17..MUL32` constants (encoding-matched
+to the SPL's `RCU_PLL_MUL17..32` macros: PLLMF[4]=1 paired with
+PLLMF[3:0] restarting at 0 for MUL17) and a `RCC_CLOCK_HSI_72MHZ`
+entry to `rcc_hsi_configs[]`. The vector now calls
+`rcc_clock_setup_pll(&rcc_hsi_configs[RCC_CLOCK_HSI_72MHZ])`.
+
+**Trace divergence vs gd-spl/gd32f1x0: 14 differences, all
+decided-acceptable.** End state on RCU_CFG0 = 0x0000000A (PLL on,
+SW=PLL) matches bit-identically. The 72 MHz PLLMF write
+(`0x08040008` — bit 27 set + bit 18 set + SW=PLL) appears in both
+traces; that's the empirical confirmation the split worked.
+
+The 14 trace-position differences resolve as follows:
+
+1. **Extra reset-to-defaults writes from gd-spl SystemInit** (no
+   counterpart in libopencm3): RCU_CFG2 @0x2C (USART0SEL/CECSEL/
+   ADCSEL), RCU_CFG3 @0x30, RCU_CTL1 @0x34 (IRC14MEN), RCU_INT @0x08.
+   These registers are at post-reset value 0 anyway; SystemInit
+   re-writes them defensively but the end state is identical.
+   `rcc_clock_setup_pll` doesn't touch them because they have no
+   STM32F1 analogue — and the firmware never depended on the
+   defensive re-write. **Acceptable.**
+
+2. **Piecewise vs batched RCU_CFG0 writes.** SPL writes RCU_CFG0
+   five times piecewise (one prescaler/PLL field at a time);
+   `rcc_clock_setup_pll` issues fewer writes that bundle the prescaler
+   and PLL setup. The set of bits asserted at the end is identical.
+   **Acceptable.**
+
+3. **HPRE explicit-zero write.** libopencm3 writes HPRE=NODIV (0)
+   via `rcc_set_hpre` even though that's the post-reset value.
+   gd-spl skips it. Same end state. **Acceptable.**
+
+4. **PLL polling reads** are not in the diff (regtrace doesn't compare
+   reads); both sides do them.
+
+The original "build leg failed" condition observed at the
+2026-04-27 capture time has been resolved by the fork extension
+in this commit. The split decision (recorded above as the recommended
+action) has been carried out.
 
 **Compare leg `gd-spl/gd32f1x0` vs `libopencm3/stm32f1`:** divergent,
 14 differences. The headline write — proof of the predicted split — is
