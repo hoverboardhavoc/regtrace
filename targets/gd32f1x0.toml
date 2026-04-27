@@ -51,7 +51,15 @@ TIM17_BASE  = 0x40014800
 DBGMCU_BASE = 0x40015800
 DMA_BASE    = 0x40020000
 RCC_BASE    = 0x40021000   # GD calls this RCU
-FMC_BASE    = 0x40022000
+# GD vendor name FMC; libopencm3/STM32 name FLASH. Same peripheral, same
+# registers (offsets 0x00..0x20 are bit-compatible with STM32F1 FLASH).
+# Use FLASH_BASE as the canonical symbol so traces from gd-spl/gd32f1x0
+# compare cleanly against libopencm3/stm32f1 in the comparator (which keys
+# on symbolic addresses). Declaring both FMC_BASE and FLASH_BASE at the
+# same numeric address is intentionally avoided — the symbolise() reverse-
+# lookup picks the longest-matching base, and a tie at the same base would
+# be resolved by Python dict iteration order which is fragile.
+FLASH_BASE  = 0x40022000   # GD calls this FMC; same registers as STM32 FLASH
 CRC_BASE    = 0x40023000
 GPIOA_BASE  = 0x48000000
 GPIOB_BASE  = 0x48000400
@@ -100,10 +108,39 @@ SYSTICK_BASE = 0xE000E010
 "0x14" = "AHBENR"
 "0x18" = "APB2ENR"
 "0x1C" = "APB1ENR"
+"0x20" = "BDCR"           # GD: RCU_BDCTL
+"0x24" = "CSR"            # GD: RCU_RSTSCK
+"0x28" = "AHBRSTR"        # GD: RCU_AHBRST
+"0x2C" = "CFGR2"          # GD: RCU_CFG1 — HXTALPREDV
+"0x30" = "CFGR3"          # GD: RCU_CFG2 — USART0SEL/CECSEL/ADCSEL
+"0x34" = "CR2"            # GD: RCU_CTL1 — IRC14M control
+
+# FLASH (GD calls this FMC). Offsets 0x00..0x20 align with STM32F1 FLASH;
+# 0x100 (WSEN) is GD-specific. Note GD's FMC_WS at 0x00 has a wait-state
+# field in bits [2:0], same position as STM32F1 FLASH_ACR LATENCY[2:0] —
+# bit-compatible, just renamed.
+[register_names.FLASH_BASE]
+"0x00" = "ACR"          # GD: FMC_WS — bits [2:0] = WSCNT (= LATENCY)
+"0x04" = "KEYR"         # GD: FMC_KEY
+"0x08" = "OPTKEYR"      # GD: FMC_OBKEY
+"0x0C" = "SR"           # GD: FMC_STAT
+"0x10" = "CR"           # GD: FMC_CTL
+"0x14" = "AR"           # GD: FMC_ADDR
+"0x1C" = "OBR"          # GD: FMC_OBSTAT
+"0x20" = "WRPR"         # GD: FMC_WP
+"0x100" = "WSEN"        # GD-only — has no STM32F1 equivalent
 
 [reset_values.RCC_BASE]
 "0x00" = "0x00000083"
 "0x14" = "0x00000014"
+
+# FLASH_BASE (FMC). Reset values per GD32F1x0 User Manual Rev 3.6 §3.4.
+# FMC_CTL.LK bit (bit 7) is set out of reset → fmc_unlock will see locked.
+# FMC_STAT busy/error bits are all zero out of reset.
+[reset_values.FLASH_BASE]
+"0x00" = "0x00000030"   # FMC_WS — PFTEN(bit4) and ICEN(bit5) set, WSCNT=0
+"0x0C" = "0x00000000"   # FMC_STAT — no busy, no errors, no end-of-op
+"0x10" = "0x00000080"   # FMC_CTL — LK=1, all op bits clear
 
 # GD32F1x0 is Cortex-M3 — bit-banding aliases exist.
 # Alias regions: 0x22000000-0x23FFFFFF (peripheral 0x40000000-0x400FFFFF)

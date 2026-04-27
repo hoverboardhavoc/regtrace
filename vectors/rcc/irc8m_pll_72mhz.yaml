@@ -1,0 +1,116 @@
+name: irc8m_pll_72mhz
+description: |
+  GD32F1x0 (F130) firmware system-clock configuration as performed by the
+  vendor SystemInit() in system_gd32f1x0.c when __SYSTEM_CLOCK_72M_PLL_IRC8M_DIV2
+  is selected. This is the canonical Hoverboard firmware clock setup for
+  the GD32F130 target — the firmware's setup.c:1154 Clock_init() function
+  is effectively a stub on F1x0 (it only reads DBGMCU_IDCODE for diagnostic
+  purposes), so the entire clock tree is configured by SystemInit before
+  main() runs.
+
+  The sequence executed by the vendor SPL:
+    1. Enable IRC8M (RCU_CTL0 |= IRC8MEN)         — write RCU_CTL0
+    2. Wait for IRC8MSTB                          — read-only poll
+    3. Reset RCU_CFG0 (clears SCS/AHBPSC/APB1/APB2/ADCPSC/CKOUT/PLLDV)
+    4. Reset RCU_CFG0 PLLSEL/PLLMF/PLLPREDV
+    5. Reset RCU_CFG0 USBDPSC                     — F130_150 only
+    6. Reset RCU_CTL0 HXTALEN/CKMEN/PLLEN/HXTALBPS
+    7. Reset RCU_CFG1 HXTALPREDV
+    8. Reset RCU_CFG2 USART0SEL/CECSEL/ADCSEL
+    9. Reset RCU_CTL1 IRC14MEN                    — F130_150 only
+   10. Zero RCU_INT
+   11. RCU_CFG0 |= AHB_CKSYS_DIV1                 — AHB = SYSCLK
+   12. RCU_CFG0 |= APB2_CKAHB_DIV1                — APB2 = AHB
+   13. RCU_CFG0 |= APB1_CKAHB_DIV1                — APB1 = AHB
+   14. RCU_CFG0 &= ~(PLLSEL|PLLMF), |= IRC8M_DIV2|MUL18
+   15. RCU_CTL0 |= PLLEN
+   16. Wait for PLLSTB                            — read-only poll
+   17. RCU_CFG0 &= ~SCS, |= CKSYSSRC_PLL
+   18. Wait until SCSS == PLL                     — read-only poll
+
+  The PLL multiplier is 18 (= IRC8M/2 * 18 = 4 MHz * 18 = 72 MHz). On
+  GD32F1x0 this fits in PLLMF[3:0] = 0b0000 (encoding for x18 with the
+  PLLMF[4]=1 high bit at RCU_CFG0 bit 27). STM32F1's RCC_CFGR PLLMUL field
+  is only 4 bits with no high-bit extension — the maximum multiplier is
+  16 → max HSI/2 PLL output is 64 MHz. This makes a vanilla
+  libopencm3/stm32f1 forwarder fundamentally unable to express the
+  GD32F1x0 72-MHz IRC8M PLL config; the divergence at RCU_CFG0 bit 27
+  is the headline finding for the RCC share-or-split decision.
+
+  Polling reads on RCU_CTL0 must return values with the corresponding
+  STB bits set so the loops exit on the first iteration. The CFG0 SCSS
+  poll needs PLL bits asserted in the read response.
+
+mode: register_writes
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+read_responses:
+  # RCU_CTL0 (offset 0x00) — for IRC8MSTB(bit1), HXTALSTB(bit17), PLLSTB(bit25)
+  # The SPL polls IRC8MSTB after IRC8MEN, then PLLSTB after PLLEN. Both must
+  # appear set. Bits 1+25 = 0x02000002. We don't enable HXTAL on this path.
+  "<RCC_BASE>+0x00": 0x02000002
+
+  # RCU_CFG0 (offset 0x04) — SPL reads this for SCSS check after switching.
+  # SCSS is at bits [3:2] = 0b10 → PLL selected. Other bits are best left at
+  # their reset value (0x00000000) for the read responses; the writes will
+  # overwrite the read-modify-write sequences naturally.
+  "<RCC_BASE>+0x04": 0x00000008
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_rcu.h]
+    body: |
+      // Mirror the inline body of vendor SPL system_gd32f1x0.c
+      // SystemInit() + system_clock_72m_irc8m() exactly. This is what
+      // every GD32F130 firmware running with __SYSTEM_CLOCK_72M_PLL_IRC8M_DIV2
+      // executes before main(); the Hoverboard firmware uses this default.
+
+      // SystemInit prologue: enable IRC8M, wait for stable
+      RCU_CTL0 |= RCU_CTL0_IRC8MEN;
+      while(0U == (RCU_CTL0 & RCU_CTL0_IRC8MSTB)) { }
+
+      // SystemInit RCU reset (GD32F130_150 path)
+      RCU_CFG0 &= ~(RCU_CFG0_SCS | RCU_CFG0_AHBPSC | RCU_CFG0_APB1PSC |
+                    RCU_CFG0_APB2PSC | RCU_CFG0_ADCPSC | RCU_CFG0_CKOUTSEL |
+                    RCU_CFG0_CKOUTDIV | RCU_CFG0_PLLDV);
+      RCU_CFG0 &= ~(RCU_CFG0_PLLSEL | RCU_CFG0_PLLMF | RCU_CFG0_PLLPREDV);
+      RCU_CFG0 &= ~(RCU_CFG0_USBDPSC);
+      RCU_CTL0 &= ~(RCU_CTL0_HXTALEN | RCU_CTL0_CKMEN | RCU_CTL0_PLLEN |
+                    RCU_CTL0_HXTALBPS);
+      RCU_CFG1 &= ~RCU_CFG1_HXTALPREDV;
+      RCU_CFG2 &= ~(RCU_CFG2_USART0SEL | RCU_CFG2_CECSEL | RCU_CFG2_ADCSEL);
+      RCU_CTL1 &= ~RCU_CTL1_IRC14MEN;
+      RCU_INT = 0x00000000U;
+
+      // system_clock_72m_irc8m()
+      RCU_CFG0 |= RCU_AHB_CKSYS_DIV1;
+      RCU_CFG0 |= RCU_APB2_CKAHB_DIV1;
+      RCU_CFG0 |= RCU_APB1_CKAHB_DIV1;
+      RCU_CFG0 &= ~(RCU_CFG0_PLLSEL | RCU_CFG0_PLLMF);
+      RCU_CFG0 |= (RCU_PLLSRC_IRC8M_DIV2 | RCU_PLL_MUL18);
+      RCU_CTL0 |= RCU_CTL0_PLLEN;
+      while(0U == (RCU_CTL0 & RCU_CTL0_PLLSTB)) { }
+      RCU_CFG0 &= ~RCU_CFG0_SCS;
+      RCU_CFG0 |= RCU_CKSYSSRC_PLL;
+      while(0U == (RCU_CFG0 & RCU_SCSS_PLL)) { }
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/rcc.h]
+    body: |
+      // Closest libopencm3/stm32f1 equivalent: HSI / 2 * 16 = 64 MHz. The
+      // STM32F1 PLLMUL field tops out at 16, so 72 MHz from HSI is hardware-
+      // unreachable here. Trace will diverge from the gd-spl path at the
+      // RCU_CFG0/RCC_CFGR PLLMUL bits — this is the empirical evidence that
+      // RCC cannot be a clean "share" between gd32f1x0 and stm32f1.
+      rcc_clock_setup_in_hsi_out_64mhz();
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/rcc.h]
+    body: |
+      // The libopencm3/gd32f1x0 stub forwards rcc.h to stm32/f1/rcc.h
+      // (per draft-prs/v0.5/...gd32f10x...patch pattern). It inherits the
+      // 64-MHz cap. A regtrace-validated GD32F1x0 RCC port would need a
+      // dedicated rcc_clock_setup() that writes RCU_CFG0 PLLMF[4] for
+      // multipliers > 16. This vector exists to surface that gap.
+      rcc_clock_setup_in_hsi_out_64mhz();

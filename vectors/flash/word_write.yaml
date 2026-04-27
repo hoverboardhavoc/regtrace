@@ -1,0 +1,74 @@
+name: word_write
+description: |
+  GD32F1x0 (F130) flash word program, mirroring one iteration of the
+  Hoverboard firmware's flashWriteBuffer() at setup.c:1082. flashWriteBuffer
+  is a simple 4-byte-stride loop that calls flashWrite() for each word;
+  flashWrite() (setup.c:1063) is the actual SPL-call sequence we model
+  here. A canonical iteration writes one word — repeat for the whole
+  buffer to write a config struct.
+
+  The vendor SPL sequence per word:
+    fmc_unlock():
+      if (FMC_CTL & LK)         — read FMC_CTL (0x10)
+        FMC_KEY = 0x45670123
+        FMC_KEY = 0xCDEF89AB
+    fmc_flag_clear(END | WPERR):
+      FMC_STAT |= flag          — write-1-to-clear at 0x0C
+    fmc_word_program(addr, data):
+      poll FMC_STAT.BUSY clear
+      FMC_CTL |= PG             — program-bit set
+      *(uint32_t *)addr = data  — actual word write to flash address
+      poll FMC_STAT.BUSY clear
+      FMC_CTL &= ~PG            — program-bit clear
+    fmc_lock():
+      FMC_CTL |= LK
+
+  Note: the actual word write `*(uint32_t *)addr = data` lands at
+  0x08007C00 on a 32 KB GD32F130C8 — that's main flash memory, NOT in
+  the FMC peripheral region (0x40022000). regtrace's peripheral_ranges
+  filter for gd32f1x0.toml includes 0x40000000-0x5FFFFFFF only, so the
+  flash-memory write is filtered out of the trace and only the FMC-peripheral
+  writes are compared. This is the correct behaviour: the comparator
+  focuses on the configuration-register sequencing, not on the data
+  payload itself.
+
+  STM32F1 FLASH_CR.PG (bit 0) matches GD32F1x0 FMC_CTL_PG (bit 0). Word
+  writes use 32-bit stores. Predicting bit-identical traces.
+
+mode: register_writes
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+read_responses:
+  "<FLASH_BASE>+0x10": 0x00000080   # FMC_CTL — reset value (LK=1)
+  "<FLASH_BASE>+0x0C": 0x00000000   # FMC_STAT — never busy, no errors
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_fmc.h]
+    body: |
+      // One iteration of flashWriteBuffer's loop body, with flashWrite
+      // expanded inline. Address 0x08007C00 = first word of the config page
+      // on a 32 KB GD32F130C8; data 0xDEADBEEF is a benign sentinel value.
+      fmc_unlock();
+      fmc_flag_clear(FMC_FLAG_END | FMC_FLAG_WPERR);
+      fmc_word_program(0x08007C00U, 0xDEADBEEFU);
+      fmc_lock();
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/flash.h]
+    body: |
+      flash_unlock();
+      flash_clear_status_flags();
+      flash_program_word(0x08007C00U, 0xDEADBEEFU);
+      flash_lock();
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/flash.h]
+    body: |
+      // Forwarder to stm32/common flash driver — same hypothesis as
+      // page_erase.yaml.
+      flash_unlock();
+      flash_clear_status_flags();
+      flash_program_word(0x08007C00U, 0xDEADBEEFU);
+      flash_lock();

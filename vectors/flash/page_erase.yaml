@@ -1,0 +1,79 @@
+name: page_erase
+description: |
+  GD32F1x0 (F130) flash page erase, mirroring the Hoverboard firmware's
+  flashErase() at setup.c:1052. This is the persistent-config page erase
+  used by ConfigWrite() before writing oConfig back to the last flash
+  page (e.g. 0x08007C00 on a 32 KB GD32F130C8 with 1 KB pages).
+
+  The vendor SPL sequence (gd32f1x0_fmc.c):
+    fmc_unlock():
+      if (FMC_CTL & LK)         — read FMC_CTL
+        FMC_KEY = UNLOCK_KEY0   — 0x45670123
+        FMC_KEY = UNLOCK_KEY1   — 0xCDEF89AB
+    fmc_flag_clear(END | WPERR):
+      FMC_STAT |= flag          — write-1-to-clear
+    fmc_page_erase(addr):
+      poll FMC_STAT.BUSY clear  — read FMC_STAT (read_response makes ready)
+      FMC_CTL |= PER            — set page-erase bit
+      FMC_ADDR = addr           — page address (any address within page)
+      FMC_CTL |= START
+      poll FMC_STAT.BUSY clear  — read FMC_STAT again
+      FMC_CTL &= ~PER
+    fmc_lock():
+      FMC_CTL |= LK
+
+  STM32F1 FLASH register layout aligns 1:1 with GD32F1x0 FMC for the
+  registers touched here (FMC_KEY=KEYR@0x04, FMC_STAT=SR@0x0C,
+  FMC_CTL=CR@0x10, FMC_ADDR=AR@0x14). Bit positions of LK/PER/START match.
+  Unlock key magic constants are byte-identical (0x45670123, 0xCDEF89AB).
+  Predicting bit-identical traces; this vector is the empirical proof.
+
+  Page address chosen is 0x08007C00 — the last 1 KB page on a 32 KB
+  GD32F130C8, which is what ConfigWrite() targets when get_flash_size()
+  returns 32 KB.
+
+mode: register_writes
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+read_responses:
+  # FMC_CTL (offset 0x10). The SPL fmc_unlock() reads CTL to check if LK is
+  # set — a non-zero LK means we should write the keys. Reset value 0x80
+  # (LK=1) is what we want.
+  "<FLASH_BASE>+0x10": 0x00000080
+  # FMC_STAT (offset 0x0C). fmc_ready_wait() polls STAT.BUSY (bit 0). Return
+  # 0 so the loop exits on the first iteration each time it's called.
+  "<FLASH_BASE>+0x0C": 0x00000000
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_fmc.h]
+    body: |
+      // Mirrors flashErase() from Hoverboard setup.c:1052 verbatim.
+      fmc_unlock();
+      fmc_flag_clear(FMC_FLAG_END | FMC_FLAG_WPERR);
+      fmc_page_erase(0x08007C00U);
+      fmc_lock();
+
+  libopencm3/stm32f1:
+    includes: [libopencm3/stm32/flash.h]
+    body: |
+      // libopencm3 stm32f1 uses the common flash_common_f01 driver. The
+      // Hoverboard SPL sequence translates 1:1: unlock → clear status →
+      // erase page → lock.
+      flash_unlock();
+      flash_clear_status_flags();
+      flash_erase_page(0x08007C00U);
+      flash_lock();
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/flash.h]
+    body: |
+      // Forwarder hypothesis: gd32/f1x0/flash.h includes
+      // <libopencm3/stm32/common/flash_common_f01.h> identically to f10x's
+      // pending FLASH port. If the trace matches gd-spl/gd32f1x0
+      // bit-for-bit, the share decision is justified.
+      flash_unlock();
+      flash_clear_status_flags();
+      flash_erase_page(0x08007C00U);
+      flash_lock();
