@@ -1,0 +1,93 @@
+name: scan_dma_circular_t3trgo
+description: |
+  Full Hoverboard FOC-build adc_init pattern: 3-channel regular sequence
+  (channels 8, 0, 4 = PB0 / PA0 / PA4), 13.5-cycle sample time, scan mode,
+  right-aligned, external trigger from TIM3 TRGO (post-calibration), DMA
+  transfer-complete IRQ on DMA1 channel 1 with circular peripheral-to-
+  memory at 16-bit width.
+
+  Mined from Src/setup.c::adc_init (the FOC-build path with phase-current
+  sensing). Surfaces the v1-style ADC sequence-register layout (RSQ1/2/3
+  + SAMPT0/1) that gd32f1x0/adc.h forwards to stm32/f1/adc.h.
+
+  The two-step trigger sequence (SWSTART during init → TIM3_TRGO post-
+  calibration) is preserved — some F130 silicon hangs RSTCLB/CLB if
+  ETERC=1 paired with a non-SW ETSRC before calibration completes.
+
+  ADC clock prescaler RCU_CKADC_CKAPB2_DIV6 / RCC_CFGR_ADCPRE_DIV6 is
+  written via the RCC peripheral, not visible at <ADC1_BASE>.
+
+mode: final_state
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+read_responses:
+  "<ADC1_BASE>+0x08": 0x00000000   # CTL1 / CR2 — calibration bit clears immediately
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_adc.h, gd32f1x0_dma.h]
+    body: |
+      static uint16_t adc_buf[3];
+      dma_parameter_struct ds;
+      ds.direction       = DMA_PERIPHERAL_TO_MEMORY;
+      ds.memory_addr     = (uint32_t)adc_buf;
+      ds.memory_inc      = DMA_MEMORY_INCREASE_ENABLE;
+      ds.memory_width    = DMA_MEMORY_WIDTH_16BIT;
+      ds.number          = 3;
+      ds.periph_addr     = (uint32_t)&ADC_RDATA;
+      ds.periph_inc      = DMA_PERIPH_INCREASE_DISABLE;
+      ds.periph_width    = DMA_PERIPHERAL_WIDTH_16BIT;
+      ds.priority        = DMA_PRIORITY_ULTRA_HIGH;
+      dma_init(DMA_CH0, &ds);
+      dma_circulation_enable(DMA_CH0);
+      dma_memory_to_memory_disable(DMA_CH0);
+      dma_interrupt_enable(DMA_CH0, DMA_CHXCTL_FTFIE);
+      dma_transfer_number_config(DMA_CH0, 3);
+      dma_channel_enable(DMA_CH0);
+
+      adc_channel_length_config(ADC_REGULAR_CHANNEL, 3);
+      adc_regular_channel_config(0, ADC_CHANNEL_8, ADC_SAMPLETIME_13POINT5);
+      adc_regular_channel_config(1, ADC_CHANNEL_0, ADC_SAMPLETIME_13POINT5);
+      adc_regular_channel_config(2, ADC_CHANNEL_4, ADC_SAMPLETIME_13POINT5);
+      adc_data_alignment_config(ADC_DATAALIGN_RIGHT);
+      adc_external_trigger_config(ADC_REGULAR_CHANNEL, ENABLE);
+      adc_external_trigger_source_config(ADC_REGULAR_CHANNEL, ADC_EXTTRIG_REGULAR_NONE);
+      adc_tempsensor_vrefint_disable();
+      adc_watchdog_disable();
+      adc_enable();
+      adc_calibration_enable();
+      adc_external_trigger_source_config(ADC_REGULAR_CHANNEL, ADC_EXTTRIG_REGULAR_T2_TRGO);
+      adc_dma_mode_enable();
+      adc_special_function_config(ADC_SCAN_MODE, ENABLE);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/adc.h, libopencm3/stm32/dma.h]
+    body: |
+      static uint16_t adc_buf[3];
+      dma_channel_reset(DMA1, DMA_CHANNEL1);
+      dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t)&ADC_DR(ADC1));
+      dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t)adc_buf);
+      dma_set_number_of_data(DMA1, DMA_CHANNEL1, 3);
+      dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+      dma_disable_peripheral_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+      dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+      dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+      dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_VERY_HIGH);
+      dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+      dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+      dma_enable_channel(DMA1, DMA_CHANNEL1);
+
+      uint8_t channels[3] = {8, 0, 4};
+      adc_set_regular_sequence(ADC1, 3, channels);
+      adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_13DOT5CYC);
+      adc_set_right_aligned(ADC1);
+      adc_enable_external_trigger_regular(ADC1, ADC_CR2_EXTSEL_SWSTART);
+      adc_disable_temperature_sensor();
+      adc_disable_analog_watchdog_regular(ADC1);
+      adc_power_on(ADC1);
+      adc_calibrate(ADC1);
+      adc_enable_external_trigger_regular(ADC1, ADC_CR2_EXTSEL_TIM3_TRGO);
+      adc_enable_dma(ADC1);
+      adc_enable_scan_mode(ADC1);

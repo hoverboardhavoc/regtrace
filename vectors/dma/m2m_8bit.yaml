@@ -7,6 +7,8 @@ description: |
 
 mode: register_writes
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_dma.h]
@@ -27,6 +29,23 @@ implementations:
   libopencm3/stm32f0:
     includes: [libopencm3/stm32/dma.h]
     body: |
+      dma_set_peripheral_address(DMA1, DMA_CHANNEL2, 0x20000100);
+      dma_set_memory_address(DMA1, DMA_CHANNEL2, 0x20000200);
+      dma_set_number_of_data(DMA1, DMA_CHANNEL2, 16);
+      dma_set_read_from_peripheral(DMA1, DMA_CHANNEL2);
+      dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL2);
+      dma_enable_peripheral_increment_mode(DMA1, DMA_CHANNEL2);
+      dma_set_memory_size(DMA1, DMA_CHANNEL2, DMA_CCR_MSIZE_8BIT);
+      dma_set_peripheral_size(DMA1, DMA_CHANNEL2, DMA_CCR_PSIZE_8BIT);
+      dma_set_priority(DMA1, DMA_CHANNEL2, DMA_CCR_PL_LOW);
+      dma_enable_mem2mem_mode(DMA1, DMA_CHANNEL2);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      // GD DMA_CH1 ↔ libopencm3 DMA1, DMA_CHANNEL2 (numbering off-by-one).
+      // gd32/f1x0/dma.h pulls dma_common_l1f013 — bit-compatible with
+      // gd-spl per regtrace decisions/v0.2/DMA.md.
       dma_set_peripheral_address(DMA1, DMA_CHANNEL2, 0x20000100);
       dma_set_memory_address(DMA1, DMA_CHANNEL2, 0x20000200);
       dma_set_number_of_data(DMA1, DMA_CHANNEL2, 16);

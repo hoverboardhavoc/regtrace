@@ -7,6 +7,8 @@ description: |
 
 mode: final_state
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_dma.h]
@@ -14,6 +16,11 @@ implementations:
       dma_interrupt_enable(DMA_CH0, DMA_CHXCTL_FTFIE);
 
   libopencm3/stm32f0:
+    includes: [libopencm3/stm32/dma.h]
+    body: |
+      dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+
+  libopencm3/gd32f1x0:
     includes: [libopencm3/stm32/dma.h]
     body: |
       dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);

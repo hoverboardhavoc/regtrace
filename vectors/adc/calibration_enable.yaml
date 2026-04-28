@@ -12,6 +12,8 @@ description: |
 
 mode: with_polling
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
 read_responses:
   "<ADC1_BASE>+0x08": 0x00000000   # ADC_CR / ADC_CTL1 — calibration bit clears immediately
 
@@ -24,4 +26,11 @@ implementations:
   libopencm3/stm32f0:
     includes: [libopencm3/stm32/adc.h]
     body: |
+      adc_calibrate(ADC1);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/adc.h]
+    body: |
+      // gd32/f1x0/adc.h forwards to stm32/f1/adc.h — STM32F1-style v1 ADC
+      // (RSTCLB+CLB two-step calibration); matches gd-spl behaviour.
       adc_calibrate(ADC1);

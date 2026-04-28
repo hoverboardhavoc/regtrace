@@ -15,6 +15,8 @@ description: |
 
 mode: register_writes
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_adc.h]
@@ -30,5 +32,18 @@ implementations:
       uint8_t channels[] = {4};
       adc_set_regular_sequence(ADC1, 1, channels);
       adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_013DOT5);
+      adc_set_right_aligned(ADC1);
+      adc_power_on(ADC1);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/adc.h]
+    body: |
+      // gd32/f1x0/adc.h forwards to stm32/f1/adc.h — same v1 layout
+      // (RSQ1/2/3 + SAMPT0/1) as gd-spl. ADC_SMPR_SMP_13DOT5CYC vs the
+      // stm32f0 ADC_SMPR_SMP_013DOT5 spelling difference is the v1 vs v2
+      // header convention.
+      uint8_t channels[] = {4};
+      adc_set_regular_sequence(ADC1, 1, channels);
+      adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_13DOT5CYC);
       adc_set_right_aligned(ADC1);
       adc_power_on(ADC1);

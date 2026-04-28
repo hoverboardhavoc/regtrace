@@ -5,6 +5,8 @@ description: |
 
 mode: final_state
 
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
 implementations:
   gd-spl/gd32f1x0:
     includes: [gd32f1x0.h, gd32f1x0_usart.h]
@@ -14,4 +16,11 @@ implementations:
   libopencm3/stm32f0:
     includes: [libopencm3/stm32/usart.h]
     body: |
+      usart_enable_tx_dma(USART1);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/usart.h]
+    body: |
+      // gd32/f1x0/usart.h forwards to stm32/common/usart_common_v2.h.
+      // GD USART0 ↔ libopencm3 USART1 (both APB2[14]).
       usart_enable_tx_dma(USART1);

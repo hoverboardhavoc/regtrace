@@ -1,0 +1,64 @@
+name: slave_restart_oc1ref_trgo
+description: |
+  TIMER2 (= STM32 TIM3) configured as a fixed-offset slave: reset-on-trigger
+  (slave mode RM) on ITR0 (= TIM1 TRGO via the F1x0 RM §15 slave-mode
+  table); CH1 in PWM mode 1 with compare value 10 (= ~140 ns at 72 MHz);
+  master-mode TRGO source = OC1REF so the compare match propagates as
+  TRGO to drive ADC EXTSEL=TIM3_TRGO.
+
+  Mined from the Hoverboard firmware adc_trigger_timer_init (Src/setup.c);
+  this is the PWM-valley → ADC-trigger bridge.
+
+mode: final_state
+
+default_compare: [gd-spl/gd32f1x0, libopencm3/gd32f1x0]
+
+implementations:
+  gd-spl/gd32f1x0:
+    includes: [gd32f1x0.h, gd32f1x0_timer.h]
+    body: |
+      timer_parameter_struct tp;
+      tp.prescaler         = 0;
+      tp.alignedmode       = TIMER_COUNTER_EDGE;
+      tp.counterdirection  = TIMER_COUNTER_UP;
+      tp.period            = 0xFFFF;
+      tp.clockdivision     = TIMER_CKDIV_DIV1;
+      tp.repetitioncounter = 0;
+      timer_init(TIMER2, &tp);
+      timer_input_trigger_source_select(TIMER2, TIMER_SMCFG_TRGSEL_ITI0);
+      timer_slave_mode_select(TIMER2, TIMER_SLAVE_MODE_RESTART);
+      timer_oc_parameter_struct oc;
+      oc.outputstate  = TIMER_CCX_DISABLE;
+      oc.outputnstate = TIMER_CCXN_DISABLE;
+      oc.ocpolarity   = TIMER_OC_POLARITY_HIGH;
+      oc.ocnpolarity  = TIMER_OCN_POLARITY_HIGH;
+      oc.ocidlestate  = TIMER_OC_IDLE_STATE_LOW;
+      oc.ocnidlestate = TIMER_OCN_IDLE_STATE_LOW;
+      timer_channel_output_config(TIMER2, TIMER_CH_0, &oc);
+      timer_channel_output_mode_config(TIMER2, TIMER_CH_0, TIMER_OC_MODE_PWM1);
+      timer_channel_output_pulse_value_config(TIMER2, TIMER_CH_0, 10);
+      timer_master_output_trigger_source_select(TIMER2, TIMER_TRI_OUT_SRC_O0CPRE);
+      timer_enable(TIMER2);
+
+  libopencm3/gd32f1x0:
+    includes: [libopencm3/stm32/timer.h]
+    body: |
+      // GD TIMER_CH_0 = libopencm3 TIM_OC1; GD TIMER_TRI_OUT_SRC_O0CPRE
+      // = libopencm3 TIM_CR2_MMS_COMPARE_OC1REF; GD TIMER_SMCFG_TRGSEL_ITI0
+      // = TIM_SMCR_TS_ITR0; GD TIMER_SLAVE_MODE_RESTART = TIM_SMCR_SMS_RM.
+      timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+      timer_set_prescaler(TIM3, 0);
+      timer_set_period(TIM3, 0xFFFF);
+      timer_set_repetition_counter(TIM3, 0);
+      timer_slave_set_trigger(TIM3, TIM_SMCR_TS_ITR0);
+      timer_slave_set_mode(TIM3, TIM_SMCR_SMS_RM);
+      timer_disable_oc_output(TIM3, TIM_OC1);
+      // TIM_OCM_PWM2 (0b111) matches the bit pattern of gd-spl
+      // TIMER_OC_MODE_PWM1 — the libraries number PWM modes from
+      // opposite ends of the OCxM[2:0] field. The Hoverboard firmware
+      // wants the gd-spl semantic (output LOW when CNT<CCR while
+      // counting up), so libopencm3 PWM2 is correct.
+      timer_set_oc_mode(TIM3, TIM_OC1, TIM_OCM_PWM2);
+      timer_set_oc_value(TIM3, TIM_OC1, 10);
+      timer_set_master_mode(TIM3, TIM_CR2_MMS_COMPARE_OC1REF);
+      timer_enable_counter(TIM3);
